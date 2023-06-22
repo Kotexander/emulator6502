@@ -330,12 +330,13 @@ impl CPU6502 {
 
         let carry = if self.sr.get(Flags6502::C) { 1 } else { 0 };
 
-        let (sum, c) = self.a.overflowing_add(num);
-        let sum = sum + carry;
+        let (sum, c1) = self.a.overflowing_add(num);
+        let (sum, c2) = sum.overflowing_add(carry);
+        let c = c1 | c2;
 
         self.sr.set(
             Flags6502::V,
-            ((!(self.a ^ num) & (self.a ^ sum)) & 1 << 7) != 0,
+            (((!(self.a ^ num)) & (self.a ^ sum)) & 1 << 7) != 0,
         );
         self.sr.update(self.a);
         self.sr.set(Flags6502::C, c);
@@ -570,7 +571,9 @@ impl CPU6502 {
         use Instruction::*;
         if let Some(op_code) = Instruction::from_u8(self.fetch_u8(bus)) {
             match op_code {
-                BRK_IMP => {}
+                BRK_IMP => {
+                    panic!("BRK");
+                }
                 ORA_IZX => {
                     let num = self.izx_read_u8(bus);
                     self.ora(num);
@@ -1287,7 +1290,17 @@ impl Bus {
     }
     fn write_u8(&mut self, addr: u16, data: u8) {
         if addr == 0x5000 {
-            println!("{data}");
+            let ptr = data as usize;
+
+            // let data: [u8; 8] = (&self.ram[ptr..(ptr + 8)]).try_into().unwrap();
+            // let idata = i64::from_le_bytes(data);
+            // let udata = u64::from_le_bytes(data);
+            // println!("u64: {udata} i64: {idata}");
+
+            let data: [u8; 4] = (&self.ram[ptr..(ptr + 4)]).try_into().unwrap();
+            let idata = i32::from_le_bytes(data);
+            let udata = u32::from_le_bytes(data);
+            println!("u32: {udata} i32: {idata}");
         }
 
         self.ram[addr as usize] = data;

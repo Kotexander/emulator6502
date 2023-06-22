@@ -1,0 +1,79 @@
+var a:4 = 1;
+var b:4 = 0;
+var c:4 = 0;
+
+c = a + b;
+a = b;
+b = c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;
+
+c = a + b;
+a = b;
+b = c;
+
+out = &c;

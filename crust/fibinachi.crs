@@ -1,0 +1,11 @@
+var a:4 = 1;
+var b:4 = 0;
+var c:4 = 0; 
+
+loop {
+    c = a + b;
+    a = b;
+    b = c;
+
+    out = &c;
+}

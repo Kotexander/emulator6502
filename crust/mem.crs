@@ -1,0 +1,16 @@
+var x:4 = 0;
+out = &x;
+
+var a:4 = 3;
+out = &a;
+
+var b:4 = 2;
+out = &b;
+
+var c:4 = b+b+b+a;
+out = &c;
+c = 5-3;
+out = &c;
+
+var d:4 = 23 + 23 + 23;
+out = &d;

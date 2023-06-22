@@ -1,14 +1,11 @@
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::num::NonZeroU8;
 use std::rc::Rc;
 use std::{
     iter::Peekable,
     str::{CharIndices, FromStr},
 };
-
-// #[derive(Debug, Clone)]
-// struct Identifier {
-// ident: String,
-// }
 
 #[derive(Debug, Clone, Copy)]
 enum Operator {
@@ -20,17 +17,19 @@ enum Operator {
 
 #[derive(Debug, Clone)]
 enum Token {
-    NUMBER(i32),
+    NUMBER(usize),
     OPERATOR(Operator),
     IDENTIFIER(Rc<str>),
     VAR,
     ASSIGN,
     SEMICOLON,
+    COLON,
     OPEN,
     CLOSE,
     LOOP,
     BOPEN,
     BCLOSE,
+    REFRENCE,
 }
 
 fn symbol(c: char) -> Option<Token> {
@@ -40,9 +39,11 @@ fn symbol(c: char) -> Option<Token> {
         '{' => Some(Token::BOPEN),
         '}' => Some(Token::BCLOSE),
         ';' => Some(Token::SEMICOLON),
+        ':' => Some(Token::COLON),
         '=' => Some(Token::ASSIGN),
         '+' => Some(Token::OPERATOR(Operator::ADD)),
         '-' => Some(Token::OPERATOR(Operator::SUB)),
+        '&' => Some(Token::REFRENCE),
         // '*' => Some(Token::OPERATOR(Operator::MUL)),
         _ => None,
     }
@@ -81,17 +82,17 @@ impl<'a> Iterator for Tokenizer<'a> {
 
         let mut end = start;
 
-        while let Some((i, c)) = self.code_chars.peek() {
+        while let Some((_i, c)) = self.code_chars.peek() {
             if c.is_whitespace() || symbol(*c).is_some() {
                 break;
             }
-            let (i, c) = self.code_chars.next().unwrap();
+            let (i, _c) = self.code_chars.next().unwrap();
             end = i;
         }
 
         let token = &self.code[start..=end];
 
-        if let Ok(num) = i32::from_str(token) {
+        if let Ok(num) = usize::from_str(token) {
             Some(Token::NUMBER(num))
         } else if token == "loop" {
             Some(Token::LOOP)
@@ -104,37 +105,61 @@ impl<'a> Iterator for Tokenizer<'a> {
 }
 
 #[derive(Debug, Clone)]
-enum AST {
-    CONSTANT(i32),
-    IDENTIFIER(Rc<str>),
-    EXPRESSION(Rc<AST>),
-    BINOP {
-        lhs: Rc<AST>,
-        op: Operator,
-        rhs: Rc<AST>,
+enum Expression {
+    CONSTANT {
+        value: usize,
+        typ: Cell<Option<Type>>,
     },
-    // DECLARE {
-    // ident: Rc<str>,
-    // expr: Rc<AST>,
-    // },
+    IDENTIFIER {
+        ident: Rc<str>,
+    },
+    REFRENCE {
+        ident: Rc<str>,
+    },
+    BINOP {
+        lhs: Rc<Self>,
+        op: Operator,
+        rhs: Rc<Self>,
+    },
+}
+#[derive(Debug, Clone)]
+enum Instruction {
     ASSIGN {
         ident: Rc<str>,
-        expr: Rc<AST>,
+        expr: Rc<Expression>,
     },
     LOOP {
-        instructions: Rc<AST>,
+        block: Option<Rc<Self>>,
     },
-    INSTRUCTION {
-        instruction: Rc<AST>,
+    // INSTRUCTIONS(Vec<Rc<Self>>),
+    BIN {
+        lhs: Rc<Self>,
+        rhs: Rc<Self>,
     },
-    BININSTRUCTION {
-        instruction1: Rc<AST>,
-        instruction2: Rc<AST>,
-    }, // FUNCTION {
-       // ident: Rc<str>,
-       // args: Rc<AST>,
-       // },
 }
+
+#[derive(Debug, Clone)]
+enum AST {
+    EXPRESSION(Rc<Expression>),
+    INSTRUCTION(Rc<Instruction>),
+    BLOCK(Option<Rc<Instruction>>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Type {
+    Uint(NonZeroU8),
+}
+enum AddrType {
+    Abs(u16),
+    Zp(u8),
+}
+struct Var {
+    addr: AddrType,
+    typ: Type,
+}
+
+type SymbolTable = HashMap<Rc<str>, Type>;
+type MemTable = HashMap<Rc<str>, Var>;
 
 #[derive(Debug)]
 enum Node {
@@ -142,74 +167,64 @@ enum Node {
     AST(AST),
 }
 
-// E <- E +/- T | T
-// T <- T * F   | F
-// F <- E       | id
-
-fn parse(code: &str) -> (AST, HashMap<Rc<str>, ()>) {
+fn parse(code: &str) -> (Rc<Instruction>, SymbolTable) {
     let mut stack = Vec::new();
     let mut tokenizer = Tokenizer::new(code).peekable();
 
-    let mut symbol_table = HashMap::new();
+    let mut symbol_table = SymbolTable::new();
 
     while let Some(token) = tokenizer.next() {
         stack.push(Node::Token(token));
 
         while match &stack[..] {
-            [.., Node::AST(
-                instruction @ (AST::ASSIGN { .. } | AST::LOOP { .. } | AST::BININSTRUCTION { .. }),
-            )] => {
-                let instruction = Rc::new(instruction.clone());
-                stack.pop();
-                stack.push(Node::AST(AST::INSTRUCTION { instruction }));
-                true
-            }
-            [.., Node::AST(instruction1 @ AST::INSTRUCTION { .. }), Node::AST(instruction2 @ AST::INSTRUCTION { .. })] =>
-            {
-                let instruction1 = Rc::new(instruction1.clone());
-                let instruction2 = Rc::new(instruction2.clone());
+            [.., Node::AST(AST::INSTRUCTION(lhs)), Node::AST(AST::INSTRUCTION(rhs))] => {
+                let lhs = lhs.clone();
+                let rhs = rhs.clone();
                 stack.pop();
                 stack.pop();
-                stack.push(Node::AST(AST::BININSTRUCTION {
-                    instruction1,
-                    instruction2,
-                }));
+
+                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::BIN {
+                    lhs,
+                    rhs,
+                }))));
                 true
             }
             [.., Node::Token(Token::NUMBER(n))] => {
-                let n = *n;
-                stack.pop();
-                stack.push(Node::AST(AST::CONSTANT(n)));
-                true
-            }
-            [.., Node::Token(Token::IDENTIFIER(x))] => {
-                let x = x.clone();
-                stack.pop();
-                stack.push(Node::AST(AST::IDENTIFIER(x)));
-                true
-            }
-
-            [.., Node::AST(expr @ AST::CONSTANT(_))] => {
-                let expr = Rc::new(expr.clone());
-                stack.pop();
-                stack.push(Node::AST(AST::EXPRESSION(expr)));
-                true
-            }
-            [.., Node::AST(expr @ AST::IDENTIFIER(_))] => {
-                if let Some(Token::ASSIGN | Token::OPEN) = tokenizer.peek() {
+                if let Some(Token::ASSIGN) = tokenizer.peek() {
                     false
                 } else {
-                    let expr = Rc::new(expr.clone());
+                    let n = *n;
                     stack.pop();
-                    stack.push(Node::AST(AST::EXPRESSION(expr)));
+                    stack.push(Node::AST(AST::EXPRESSION(Rc::new(Expression::CONSTANT {
+                        value: n,
+                        typ: Cell::new(None),
+                    }))));
                     true
                 }
             }
-            [.., Node::AST(binop @ AST::BINOP { .. })] => {
-                let binop = Rc::new(binop.clone());
+            [.., Node::Token(Token::REFRENCE), Node::Token(Token::IDENTIFIER(ident))] => {
+                let ident = ident.clone();
                 stack.pop();
-                stack.push(Node::AST(AST::EXPRESSION(binop)));
+                stack.pop();
+                stack.push(Node::AST(AST::EXPRESSION(Rc::new(Expression::REFRENCE {
+                    ident,
+                }))));
                 true
+            }
+            [.., Node::Token(Token::IDENTIFIER(ident))] => {
+                if let Some(Token::ASSIGN | Token::COLON) = tokenizer.peek() {
+                    false
+                } else {
+                    let ident = ident.clone();
+                    stack.pop();
+                    stack.push(Node::AST(AST::EXPRESSION(Rc::new(
+                        Expression::IDENTIFIER {
+                            ident,
+                            // typ: None
+                        },
+                    ))));
+                    true
+                }
             }
             [.., Node::Token(Token::OPEN), Node::AST(expr @ AST::EXPRESSION(_)), Node::Token(Token::CLOSE)] =>
             {
@@ -220,80 +235,166 @@ fn parse(code: &str) -> (AST, HashMap<Rc<str>, ()>) {
                 stack.push(Node::AST(expr));
                 true
             }
-
-            [.., Node::AST(lhs @ AST::EXPRESSION(_)), Node::Token(Token::OPERATOR(op)), Node::AST(rhs @ AST::EXPRESSION(_))] =>
+            [.., Node::AST(AST::EXPRESSION(lhs)), Node::Token(Token::OPERATOR(op)), Node::AST(AST::EXPRESSION(rhs))] =>
             {
-                let lhs = Rc::new(lhs.clone());
-                let rhs = Rc::new(rhs.clone());
+                let lhs = lhs.clone();
+                let rhs = rhs.clone();
                 let op = *op;
                 stack.pop();
                 stack.pop();
                 stack.pop();
+                stack.push(Node::AST(AST::EXPRESSION(Rc::new(Expression::BINOP {
+                    lhs,
+                    op,
+                    rhs,
+                }))));
 
-                stack.push(Node::AST(AST::BINOP { lhs, op, rhs }));
                 true
             }
-
-            [.., Node::Token(Token::VAR), Node::AST(AST::IDENTIFIER(ident)), Node::Token(Token::ASSIGN), Node::AST(expr @ AST::EXPRESSION(_)), Node::Token(Token::SEMICOLON)] =>
+            [.., Node::Token(Token::VAR), Node::Token(Token::IDENTIFIER(ident)), Node::Token(Token::COLON), Node::Token(Token::NUMBER(n)), Node::Token(Token::ASSIGN), Node::AST(AST::EXPRESSION(expr)), Node::Token(Token::SEMICOLON)] =>
             {
                 let ident = ident.clone();
-                let expr = Rc::new(expr.clone());
+                let expr = expr.clone();
+                let n = *n;
+                stack.pop();
+                stack.pop();
                 stack.pop();
                 stack.pop();
                 stack.pop();
                 stack.pop();
                 stack.pop();
 
-                symbol_table.insert(ident.clone(), ());
-                stack.push(Node::AST(AST::ASSIGN { ident, expr }));
+                let typ = Type::Uint(NonZeroU8::new(n as u8).expect("size can't be zero"));
+
+                symbol_table.insert(ident.clone(), typ);
+                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::ASSIGN {
+                    ident,
+                    expr,
+                }))));
                 true
             }
-            [.., Node::AST(AST::IDENTIFIER(ident)), Node::Token(Token::ASSIGN), Node::AST(expr @ AST::EXPRESSION(_)), Node::Token(Token::SEMICOLON)] =>
+            [.., Node::Token(Token::VAR), Node::Token(Token::IDENTIFIER(ident)), Node::Token(Token::ASSIGN), Node::AST(AST::EXPRESSION(expr)), Node::Token(Token::SEMICOLON)] =>
             {
                 let ident = ident.clone();
-                let expr = Rc::new(expr.clone());
+                let expr = expr.clone();
+                stack.pop();
                 stack.pop();
                 stack.pop();
                 stack.pop();
                 stack.pop();
 
-                stack.push(Node::AST(AST::ASSIGN { ident, expr }));
+                symbol_table.insert(ident.clone(), Type::Uint(NonZeroU8::new(1).unwrap()));
+                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::ASSIGN {
+                    ident,
+                    expr,
+                }))));
                 true
             }
-            [.., Node::Token(Token::LOOP), Node::Token(Token::BOPEN), Node::AST(instructions @ AST::INSTRUCTION { .. }), Node::Token(Token::BCLOSE)] =>
+            [.., Node::Token(Token::IDENTIFIER(ident)), Node::Token(Token::ASSIGN), Node::AST(AST::EXPRESSION(expr)), Node::Token(Token::SEMICOLON)] =>
             {
-                let instructions = Rc::new(instructions.clone());
+                let ident = ident.clone();
+                let expr = expr.clone();
                 stack.pop();
                 stack.pop();
                 stack.pop();
                 stack.pop();
 
-                stack.push(Node::AST(AST::LOOP { instructions }));
+                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::ASSIGN {
+                    ident,
+                    expr,
+                }))));
                 true
             }
+            [.., Node::Token(Token::BOPEN), Node::Token(Token::BCLOSE)] => {
+                stack.pop();
+                stack.pop();
 
-            // [.., Node::AST(AST::FUNCTION { .. })]
+                stack.push(Node::AST(AST::BLOCK(None)));
+                true
+            }
+            [.., Node::Token(Token::BOPEN), Node::AST(AST::INSTRUCTION(instructions)), Node::Token(Token::BCLOSE)] =>
+            {
+                let instructions = instructions.clone();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+
+                stack.push(Node::AST(AST::BLOCK(Some(instructions))));
+                true
+            }
+            [.., Node::Token(Token::LOOP), Node::AST(AST::BLOCK(block))] => {
+                let block = block.clone();
+                stack.pop();
+                stack.pop();
+
+                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::LOOP {
+                    block,
+                }))));
+                true
+            }
             _ => false,
         } {}
     }
 
+    for node in &stack {
+        println!("{node:#?}");
+    }
+    println!("{symbol_table:#?}");
+
     if stack.len() == 1 {
-        if let Node::AST(ast) = stack.pop().unwrap() {
-            println!("{ast:#?}");
+        if let Node::AST(AST::INSTRUCTION(ast)) = stack.pop().unwrap() {
+            // println!("{ast:#?}");
             (ast, symbol_table)
         } else {
-            panic!("node is not ast")
+            panic!("node is not ast or instruction")
         }
     } else {
         panic!("stack is bigger then 1");
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum State {
-    Normal,
-    Add,
-    Sub,
+fn analyse_expression(expr: &Expression, symbol_table: &SymbolTable, imp_typ: Type) -> Type {
+    match expr {
+        Expression::CONSTANT { value: _, typ } => {
+            if let Some(typ) = typ.get() {
+                typ
+            } else {
+                // if let Some(imp_typ) = imp_typ {
+                typ.set(Some(imp_typ));
+                imp_typ
+                // } else {
+                // panic!("Could not determin type of constant");
+                // }
+            }
+        }
+        Expression::IDENTIFIER { ident } => symbol_table[ident],
+        Expression::BINOP { lhs, op: _, rhs } => {
+            let lhs_typ = analyse_expression(lhs, symbol_table, imp_typ);
+            let rhs_typ = analyse_expression(rhs, symbol_table, imp_typ);
+            if lhs_typ == rhs_typ {
+                lhs_typ
+            } else {
+                panic!("bin op types don't match");
+            }
+        }
+        Expression::REFRENCE { ident } => Type::Uint(NonZeroU8::new(1).unwrap()),
+    }
+}
+fn analyse_instruction(instruction: &Instruction, symbol_table: &SymbolTable) {
+    match instruction {
+        Instruction::ASSIGN { ident, expr } => {
+            analyse_expression(expr, symbol_table, symbol_table[ident]);
+        }
+        Instruction::LOOP { block } => {
+            if let Some(instructions) = block {
+                analyse_instruction(instructions, symbol_table);
+            }
+        }
+        Instruction::BIN { lhs, rhs } => {
+            analyse_instruction(lhs, symbol_table);
+            analyse_instruction(rhs, symbol_table);
+        }
+    }
 }
 
 struct Ram {
@@ -319,188 +420,324 @@ impl Ram {
     }
 }
 
-fn gen_code(ast: &AST, ram: &mut Ram, mem_table: &HashMap<Rc<str>, VarType>, state: State) {
-    match ast {
-        AST::CONSTANT(n) => {
-            match state {
-                State::Normal => {
-                    ram.insert_u8(0xA9); // LDA_IMM
-                    ram.insert_u8(*n as u8);
-                }
-                State::Add => {
-                    ram.insert_u8(0x18); // CLC_IMP
-                    ram.insert_u8(0x69); // ADC_IMM
-                    ram.insert_u8(*n as u8);
-                }
-                State::Sub => {
-                    ram.insert_u8(0x38); // SEC_IMP
-                    ram.insert_u8(0xE9); // SBC_IMM
-                    ram.insert_u8(*n as u8);
-                }
-            }
-        }
-        AST::IDENTIFIER(x) => {
-            match state {
-                State::Normal => {
-                    match mem_table[x] {
-                        VarType::Abs(x) => {
-                            ram.insert_u8(0xAD); // LDA_ABS
-                            ram.insert_u16(x);
+#[derive(Debug, Clone, Copy)]
+enum State {
+    Normal,
+    Add,
+    Sub,
+}
+
+fn gen_expression(
+    expr: &Expression,
+    ram: &mut Ram,
+    mem_table: &MemTable,
+    state: State,
+    // typ: Type,
+) {
+    match expr {
+        Expression::CONSTANT { value, typ } => {
+            if let Some(typ) = typ.get() {
+                let mut b = value.to_le_bytes().to_vec();
+                let size = match typ {
+                    Type::Uint(size) => size.get(),
+                };
+                b.resize(size as usize, 0);
+                match state {
+                    State::Normal => {
+                        for i in 0..size {
+                            ram.insert_u8(0xA9); // LDA_IMM
+                            ram.insert_u8(b[i as usize]);
+                            ram.insert_u8(0x85); // STA_ZP0
+                            ram.insert_u8(i as u8);
                         }
-                        VarType::Zp(x) => {
+                        // ram.insert_u8(0x85); // STA_ZP0
+                        // ram.insert_u8(i as u8);
+                    }
+                    State::Add => {
+                        ram.insert_u8(0x18); // CLC_IMP
+                        for i in 0..size {
                             ram.insert_u8(0xA5); // LDA_ZP0
-                            ram.insert_u8(x);
+                            ram.insert_u8(i as u8);
+                            ram.insert_u8(0x69); // ADC_IMM
+                            ram.insert_u8(b[i as usize]);
+                            ram.insert_u8(0x85); // STA_ZP0
+                            ram.insert_u8(i as u8);
                         }
-                    };
+
+                        // ram.insert_u8(0x18); // CLC_IMP
+                        // ram.insert_u8(0x69); // ADC_IMM
+                        // ram.insert_u8(*n as u8);
+                    }
+                    State::Sub => {
+                        ram.insert_u8(0x38); // SEC_IMP
+                        for i in 0..size {
+                            ram.insert_u8(0xA5); // LDA_ZP0
+                            ram.insert_u8(i as u8);
+                            ram.insert_u8(0xE9); // SBC_IMM
+                            ram.insert_u8(b[i as usize]);
+                            ram.insert_u8(0x85); // STA_ZP0
+                            ram.insert_u8(i as u8);
+                        }
+
+                        // ram.insert_u8(0x38); // SEC_IMP
+                        // ram.insert_u8(0xE9); // SBC_IMM
+                        // ram.insert_u8(*n as u8);
+                    }
+                }
+            } else {
+                panic!("couldn't generate code");
+            }
+        }
+        Expression::IDENTIFIER { ident } => {
+            let var = &mem_table[ident];
+            let size = match var.typ {
+                Type::Uint(size) => size.get(),
+            };
+            match state {
+                State::Normal => {
+                    for i in 0..size {
+                        match var.addr {
+                            AddrType::Abs(p) => {
+                                let p = p + i as u16;
+                                ram.insert_u8(0xAD); // LDA_ABS
+                                ram.insert_u16(p);
+                                ram.insert_u8(0x8D); // STA_ABS
+                                ram.insert_u16(i as u16);
+                            }
+                            AddrType::Zp(p) => {
+                                let p = p + i;
+                                ram.insert_u8(0xA5); // LDA_ZP0
+                                ram.insert_u8(p);
+                                ram.insert_u8(0x85); // STA_ZP0
+                                ram.insert_u8(i as u8);
+                            }
+                        };
+                    }
+                    // match mem_table[x] {
+                    //     VarType::Abs(x) => {
+                    //         ram.insert_u8(0xAD); // LDA_ABS
+                    //         ram.insert_u16(x);
+                    //     }
+                    //     VarType::Zp(x) => {
+                    //         ram.insert_u8(0xA5); // LDA_ZP0
+                    //         ram.insert_u8(x);
+                    //     }
+                    // };
                 }
                 State::Add => {
                     ram.insert_u8(0x18); // CLC_IMP
-                    match mem_table[x] {
-                        VarType::Abs(x) => {
-                            ram.insert_u8(0x6D); // ADC_ABS
-                            ram.insert_u16(x);
-                        }
-                        VarType::Zp(x) => {
-                            ram.insert_u8(0x65); // ADC_ZP0
-                            ram.insert_u8(x);
-                        }
-                    };
+                    for i in 0..size {
+                        match var.addr {
+                            AddrType::Abs(p) => {
+                                let p = p + i as u16;
+                                ram.insert_u8(0xA5); // LDA_ZP0
+                                ram.insert_u8(i as u8);
+                                ram.insert_u8(0x6D); // ADC_ABS
+                                ram.insert_u16(p);
+                                ram.insert_u8(0x85); // STA_ZP0
+                                ram.insert_u8(i as u8);
+                            }
+                            AddrType::Zp(p) => {
+                                let p = p + i;
+                                ram.insert_u8(0xA5); // LDA_ZP0
+                                ram.insert_u8(i as u8);
+                                ram.insert_u8(0x65); // ADC_ZP0
+                                ram.insert_u8(p);
+                                ram.insert_u8(0x85); // STA_ZP0
+                                ram.insert_u8(i as u8);
+                            }
+                        };
+                    }
+                    // ram.insert_u8(0x18); // CLC_IMP
+                    // match mem_table[x] {
+                    //     VarType::Abs(x) => {
+                    //         ram.insert_u8(0x6D); // ADC_ABS
+                    //         ram.insert_u16(x);
+                    //     }
+                    //     VarType::Zp(x) => {
+                    //         ram.insert_u8(0x65); // ADC_ZP0
+                    //         ram.insert_u8(x);
+                    //     }
+                    // };
                 }
                 State::Sub => {
                     ram.insert_u8(0x38); // SEC_IMP
-                    match mem_table[x] {
-                        VarType::Abs(x) => {
-                            ram.insert_u8(0xED); // SBC_ABS
-                            ram.insert_u16(x);
-                        }
-                        VarType::Zp(x) => {
-                            ram.insert_u8(0xE5); // SBC_ZP0
-                            ram.insert_u8(x);
-                        }
-                    };
+                    for i in 0..size {
+                        match var.addr {
+                            AddrType::Abs(p) => {
+                                let p = p + i as u16;
+                                ram.insert_u8(0xA5); // LDA_ZP0
+                                ram.insert_u8(i as u8);
+                                ram.insert_u8(0xED); // SBC_ABS
+                                ram.insert_u16(p);
+                                ram.insert_u8(0x85); // STA_ZP0
+                                ram.insert_u8(i as u8);
+                            }
+                            AddrType::Zp(p) => {
+                                let p = p + i;
+                                ram.insert_u8(0xA5); // LDA_ZP0
+                                ram.insert_u8(i as u8);
+                                ram.insert_u8(0xE5); // SBC_ZP0
+                                ram.insert_u8(p);
+                                ram.insert_u8(0x85); // STA_ZP0
+                                ram.insert_u8(i as u8);
+                            }
+                        };
+                    }
+                    // ram.insert_u8(0x38); // SEC_IMP
+                    // match mem_table[x] {
+                    //     VarType::Abs(x) => {
+                    //         ram.insert_u8(0xED); // SBC_ABS
+                    //         ram.insert_u16(x);
+                    //     }
+                    //     VarType::Zp(x) => {
+                    //         ram.insert_u8(0xE5); // SBC_ZP0
+                    //         ram.insert_u8(x);
+                    //     }
+                    // };
                 }
             }
         }
-        AST::EXPRESSION(expr) => {
-            gen_code(expr, ram, mem_table, state);
-        }
-        AST::BINOP { lhs, op, rhs } => {
-            gen_code(lhs, ram, mem_table, state);
+        Expression::BINOP { lhs, op, rhs } => {
+            gen_expression(lhs, ram, mem_table, state);
             let state = match op {
                 Operator::ADD => State::Add,
                 Operator::SUB => State::Sub,
             };
-            gen_code(rhs, ram, mem_table, state);
+            gen_expression(rhs, ram, mem_table, state);
         }
-        AST::ASSIGN { ident, expr } => {
-            // assert_eq!(state, State::Normal);
-            gen_code(expr, ram, mem_table, State::Normal);
-            match mem_table[ident] {
-                VarType::Abs(x) => {
-                    ram.insert_u8(0x8D); // STA_ABS
-
-                    ram.insert_u16(x);
-                }
-                VarType::Zp(x) => {
-                    ram.insert_u8(0x85); // STA_ZP0
-                    ram.insert_u8(x);
-                }
+        Expression::REFRENCE { ident } => {
+            let p = match mem_table[ident].addr {
+                AddrType::Abs(_) => panic!("absolute references aren't supported"),
+                AddrType::Zp(p) => p,
             };
+            gen_expression(
+                &Expression::CONSTANT {
+                    value: p as usize,
+                    typ: Cell::new(Some(Type::Uint(NonZeroU8::new(1).unwrap()))),
+                },
+                ram,
+                mem_table,
+                state,
+            );
         }
-        AST::LOOP { instructions } => {
+    }
+}
+fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTable) {
+    match instruction {
+        Instruction::ASSIGN { ident, expr } => {
+            gen_expression(expr, ram, mem_table, State::Normal);
+            let var = &mem_table[ident];
+            let size = match var.typ {
+                Type::Uint(size) => size.get(),
+            };
+            for i in 0..size {
+                match var.addr {
+                    AddrType::Abs(p) => {
+                        let p = p + i as u16;
+                        ram.insert_u8(0xA5); // LDA_ZP0
+                        ram.insert_u8(i);
+                        ram.insert_u8(0x8D); // STA_ABS
+                        ram.insert_u16(p);
+                    }
+                    AddrType::Zp(p) => {
+                        let p = p + i;
+                        ram.insert_u8(0xA5); // LDA_ZP0
+                        ram.insert_u8(i);
+                        ram.insert_u8(0x85); // STA_ZP0
+                        ram.insert_u8(p);
+                    }
+                };
+            }
+
+            // match mem_table[ident] {
+            // VarType::Abs(x) => {
+            // ram.insert_u8(0x8D); // STA_ABS
+            // ram.insert_u16(x);
+            // }
+            // VarType::Zp(x) => {
+            // ram.insert_u8(0x85); // STA_ZP0
+            // ram.insert_u8(x);
+            // }
+            // };
+        }
+        Instruction::LOOP { block } => {
             let ptr = ram.ptr;
-            gen_code(instructions, ram, mem_table, state);
+            if let Some(instructions) = block {
+                gen_instruction(instructions, ram, mem_table);
+            } else {
+                ram.insert_u8(0xEA); // NOP
+            }
             ram.insert_u8(0x4C); // JMP_ABS
             ram.insert_u16(ptr as u16);
         }
-        AST::INSTRUCTION { instruction } => {
-            gen_code(instruction, ram, mem_table, state);
-        }
-        AST::BININSTRUCTION {
-            instruction1,
-            instruction2,
-        } => {
-            gen_code(instruction1, ram, mem_table, state);
-            gen_code(instruction2, ram, mem_table, state);
+        Instruction::BIN { lhs, rhs } => {
+            gen_instruction(lhs, ram, mem_table);
+            gen_instruction(rhs, ram, mem_table);
         }
     }
-}
-
-enum VarType {
-    Abs(u16),
-    Zp(u8),
 }
 
 fn main() {
-    let code = r#"
-var x=43-1;
-var y = 30-7;
+    let file = std::env::args().nth(1).expect("No file given");
+    let path = std::path::Path::new(&file);
+    let code = std::fs::read_to_string(path).expect("Could not read file");
 
-x=x+(23   +    y +(24-     1)         );
+    let (instruction, mut symbol_table) = parse(&code);
 
-out = x;
-out = y;
-"#;
-
-    //     let fibinachi = r#"
-    // var a = 1;
-    // var b = 0;
-    // var c = 0;
-
-    // loop {
-    //     c = a + b;
-    //     a = b;
-    //     b = c;
-
-    //     out = c;
-    // }
-    // "#;
-
-    let fibinachi = r#"
-a = 1;
-b = 0;
-c = 0;
-
-loop {
-    c = a + b;
-    a = b;
-    b = c;
-
-    out = c;
-}
-var a=0;
-var b=0;
-var c=0;
-"#;
-
-    // println(x)
-    // loop {
-    //     y = y + 1;
-    //     println(y);
-    // }
-
-    let (tree, symbol_table) = parse(fibinachi);
     let mut mem_table = HashMap::new();
-    mem_table.insert(Rc::from("out"), VarType::Abs(0x5000));
-    let mut i = 0u8;
-    for (ident, _) in symbol_table.iter() {
-        mem_table.insert(ident.clone(), VarType::Zp(i));
-        i += 1;
-    }
-    let mut ram = Ram::new();
+    mem_table.insert(
+        Rc::from("out"),
+        Var {
+            addr: AddrType::Abs(0x5000),
+            typ: Type::Uint(NonZeroU8::new(2).unwrap()),
+        },
+    );
 
-    // for instruction in tree {
-    gen_code(&tree, &mut ram, &mem_table, State::Normal);
-    // }
+    let mut i: u8 = 0;
+    for (id, typ) in symbol_table.iter() {
+        match typ {
+            Type::Uint(size) => i = i.max(size.get()),
+        }
+    }
+    println!("Temp size: {i}");
+
+    for (ident, typ) in symbol_table.iter() {
+        println!("id: {ident } addr: {i}");
+        match typ {
+            Type::Uint(size) => {
+                mem_table.insert(
+                    ident.clone(),
+                    Var {
+                        addr: AddrType::Zp(i),
+                        typ: *typ,
+                    },
+                );
+                i += size.get();
+            }
+        }
+    }
+    symbol_table.insert(Rc::from("out"), Type::Uint(NonZeroU8::new(1).unwrap()));
+
+    let mut ram = Ram::new();
+    analyse_instruction(&instruction, &symbol_table);
+    println!("{instruction:#?}");
+    gen_instruction(&instruction, &mut ram, &mem_table);
+
     let ptr = ram.ptr as u16;
     ram.insert_u8(0xEA); // NOP
     ram.insert_u8(0x4C); // JMP_ABS
     ram.insert_u16(ptr);
 
-    std::fs::write("a.bin", ram.data).unwrap();
-
-    // for token in Tokenizer::new(code) {
-    // println!("{:?}", token);
-    // }
-    // println!("{:#?}", parse(code));
+    std::fs::write(
+        format!(
+            "{}.bin",
+            path.file_stem()
+                .expect("Could not get file name")
+                .to_str()
+                .unwrap()
+        ),
+        ram.data,
+    )
+    .unwrap();
 }
