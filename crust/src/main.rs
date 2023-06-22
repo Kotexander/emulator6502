@@ -148,6 +148,7 @@ enum AST {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Type {
     Uint(NonZeroU8),
+    // Ref(Box<Self>),
 }
 enum AddrType {
     Abs(u16),
@@ -352,7 +353,6 @@ fn parse(code: &str) -> (Rc<Instruction>, SymbolTable) {
         panic!("stack is bigger then 1");
     }
 }
-
 fn analyse_expression(expr: &Expression, symbol_table: &SymbolTable, imp_typ: Type) -> Type {
     match expr {
         Expression::CONSTANT { value: _, typ } => {
@@ -437,52 +437,55 @@ fn gen_expression(
     match expr {
         Expression::CONSTANT { value, typ } => {
             if let Some(typ) = typ.get() {
-                let mut b = value.to_le_bytes().to_vec();
+                let mut bytes = value.to_le_bytes().to_vec();
                 let size = match typ {
                     Type::Uint(size) => size.get(),
                 };
-                b.resize(size as usize, 0);
+                bytes.resize(size as usize, 0);
+
+                // set carry bit (if needed)
                 match state {
-                    State::Normal => {
-                        for i in 0..size {
-                            ram.insert_u8(0xA9); // LDA_IMM
-                            ram.insert_u8(b[i as usize]);
-                            ram.insert_u8(0x85); // STA_ZP0
-                            ram.insert_u8(i as u8);
-                        }
-                        // ram.insert_u8(0x85); // STA_ZP0
-                        // ram.insert_u8(i as u8);
-                    }
+                    State::Normal => {}
                     State::Add => {
                         ram.insert_u8(0x18); // CLC_IMP
-                        for i in 0..size {
-                            ram.insert_u8(0xA5); // LDA_ZP0
-                            ram.insert_u8(i as u8);
-                            ram.insert_u8(0x69); // ADC_IMM
-                            ram.insert_u8(b[i as usize]);
-                            ram.insert_u8(0x85); // STA_ZP0
-                            ram.insert_u8(i as u8);
-                        }
-
-                        // ram.insert_u8(0x18); // CLC_IMP
-                        // ram.insert_u8(0x69); // ADC_IMM
-                        // ram.insert_u8(*n as u8);
                     }
                     State::Sub => {
                         ram.insert_u8(0x38); // SEC_IMP
-                        for i in 0..size {
-                            ram.insert_u8(0xA5); // LDA_ZP0
-                            ram.insert_u8(i as u8);
-                            ram.insert_u8(0xE9); // SBC_IMM
-                            ram.insert_u8(b[i as usize]);
-                            ram.insert_u8(0x85); // STA_ZP0
-                            ram.insert_u8(i as u8);
-                        }
-
-                        // ram.insert_u8(0x38); // SEC_IMP
-                        // ram.insert_u8(0xE9); // SBC_IMM
-                        // ram.insert_u8(*n as u8);
                     }
+                }
+
+                // loop bytes
+                for i in 0..size {
+                    // load
+                    match state {
+                        State::Normal => {
+                            // load const byte
+                            ram.insert_u8(0xA9); // LDA_IMM
+                            ram.insert_u8(bytes[i as usize]);
+                        }
+                        _ => {
+                            // load byte
+                            ram.insert_u8(0xA5); // LDA_ZP0
+                            ram.insert_u8(i);
+                        }
+                    }
+                    // op
+                    match state {
+                        State::Normal => {}
+                        State::Add => {
+                            // add const byte
+                            ram.insert_u8(0x69); // ADC_IMM
+                            ram.insert_u8(bytes[i as usize]);
+                        }
+                        State::Sub => {
+                            // sub const byte
+                            ram.insert_u8(0xE9); // SBC_IMM
+                            ram.insert_u8(bytes[i as usize]);
+                        }
+                    }
+                    // save byte
+                    ram.insert_u8(0x85); // STA_ZP0
+                    ram.insert_u8(i);
                 }
             } else {
                 panic!("couldn't generate code");
@@ -493,109 +496,80 @@ fn gen_expression(
             let size = match var.typ {
                 Type::Uint(size) => size.get(),
             };
+
+            // set carry bit (if needed)
             match state {
-                State::Normal => {
-                    for i in 0..size {
+                State::Normal => {}
+                State::Add => {
+                    ram.insert_u8(0x18); // CLC_IMP
+                }
+                State::Sub => {
+                    ram.insert_u8(0x38); // SEC_IMP
+                }
+            }
+
+            // loop bytes
+            for i in 0..size {
+                // load
+                match state {
+                    State::Normal => {
+                        // load ident byte
                         match var.addr {
                             AddrType::Abs(p) => {
                                 let p = p + i as u16;
                                 ram.insert_u8(0xAD); // LDA_ABS
                                 ram.insert_u16(p);
-                                ram.insert_u8(0x8D); // STA_ABS
-                                ram.insert_u16(i as u16);
                             }
                             AddrType::Zp(p) => {
                                 let p = p + i;
                                 ram.insert_u8(0xA5); // LDA_ZP0
                                 ram.insert_u8(p);
-                                ram.insert_u8(0x85); // STA_ZP0
-                                ram.insert_u8(i as u8);
                             }
                         };
                     }
-                    // match mem_table[x] {
-                    //     VarType::Abs(x) => {
-                    //         ram.insert_u8(0xAD); // LDA_ABS
-                    //         ram.insert_u16(x);
-                    //     }
-                    //     VarType::Zp(x) => {
-                    //         ram.insert_u8(0xA5); // LDA_ZP0
-                    //         ram.insert_u8(x);
-                    //     }
-                    // };
+                    _ => {
+                        // load byte
+                        ram.insert_u8(0xA5); // LDA_ZP0
+                        ram.insert_u8(i);
+                    }
                 }
-                State::Add => {
-                    ram.insert_u8(0x18); // CLC_IMP
-                    for i in 0..size {
+                match state {
+                    State::Normal => {}
+                    State::Add => {
+                        // add ident byte
                         match var.addr {
                             AddrType::Abs(p) => {
                                 let p = p + i as u16;
-                                ram.insert_u8(0xA5); // LDA_ZP0
-                                ram.insert_u8(i as u8);
                                 ram.insert_u8(0x6D); // ADC_ABS
                                 ram.insert_u16(p);
-                                ram.insert_u8(0x85); // STA_ZP0
-                                ram.insert_u8(i as u8);
                             }
                             AddrType::Zp(p) => {
                                 let p = p + i;
-                                ram.insert_u8(0xA5); // LDA_ZP0
-                                ram.insert_u8(i as u8);
                                 ram.insert_u8(0x65); // ADC_ZP0
                                 ram.insert_u8(p);
-                                ram.insert_u8(0x85); // STA_ZP0
-                                ram.insert_u8(i as u8);
                             }
-                        };
+                        }
                     }
-                    // ram.insert_u8(0x18); // CLC_IMP
-                    // match mem_table[x] {
-                    //     VarType::Abs(x) => {
-                    //         ram.insert_u8(0x6D); // ADC_ABS
-                    //         ram.insert_u16(x);
-                    //     }
-                    //     VarType::Zp(x) => {
-                    //         ram.insert_u8(0x65); // ADC_ZP0
-                    //         ram.insert_u8(x);
-                    //     }
-                    // };
-                }
-                State::Sub => {
-                    ram.insert_u8(0x38); // SEC_IMP
-                    for i in 0..size {
+                    State::Sub => {
+                        // sub ident byte
                         match var.addr {
                             AddrType::Abs(p) => {
                                 let p = p + i as u16;
-                                ram.insert_u8(0xA5); // LDA_ZP0
-                                ram.insert_u8(i as u8);
                                 ram.insert_u8(0xED); // SBC_ABS
                                 ram.insert_u16(p);
-                                ram.insert_u8(0x85); // STA_ZP0
-                                ram.insert_u8(i as u8);
                             }
                             AddrType::Zp(p) => {
                                 let p = p + i;
-                                ram.insert_u8(0xA5); // LDA_ZP0
-                                ram.insert_u8(i as u8);
                                 ram.insert_u8(0xE5); // SBC_ZP0
                                 ram.insert_u8(p);
-                                ram.insert_u8(0x85); // STA_ZP0
-                                ram.insert_u8(i as u8);
                             }
-                        };
+                        }
                     }
-                    // ram.insert_u8(0x38); // SEC_IMP
-                    // match mem_table[x] {
-                    //     VarType::Abs(x) => {
-                    //         ram.insert_u8(0xED); // SBC_ABS
-                    //         ram.insert_u16(x);
-                    //     }
-                    //     VarType::Zp(x) => {
-                    //         ram.insert_u8(0xE5); // SBC_ZP0
-                    //         ram.insert_u8(x);
-                    //     }
-                    // };
                 }
+
+                // save byte
+                ram.insert_u8(0x85); // STA_ZP0
+                ram.insert_u8(i);
             }
         }
         Expression::BINOP { lhs, op, rhs } => {
@@ -632,34 +606,21 @@ fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTabl
                 Type::Uint(size) => size.get(),
             };
             for i in 0..size {
+                ram.insert_u8(0xA5); // LDA_ZP0
+                ram.insert_u8(i);
                 match var.addr {
                     AddrType::Abs(p) => {
                         let p = p + i as u16;
-                        ram.insert_u8(0xA5); // LDA_ZP0
-                        ram.insert_u8(i);
                         ram.insert_u8(0x8D); // STA_ABS
                         ram.insert_u16(p);
                     }
                     AddrType::Zp(p) => {
                         let p = p + i;
-                        ram.insert_u8(0xA5); // LDA_ZP0
-                        ram.insert_u8(i);
                         ram.insert_u8(0x85); // STA_ZP0
                         ram.insert_u8(p);
                     }
                 };
             }
-
-            // match mem_table[ident] {
-            // VarType::Abs(x) => {
-            // ram.insert_u8(0x8D); // STA_ABS
-            // ram.insert_u16(x);
-            // }
-            // VarType::Zp(x) => {
-            // ram.insert_u8(0x85); // STA_ZP0
-            // ram.insert_u8(x);
-            // }
-            // };
         }
         Instruction::LOOP { block } => {
             let ptr = ram.ptr;
