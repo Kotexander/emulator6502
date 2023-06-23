@@ -1,0 +1,8 @@
+var x:4 = 69;
+var y = x;
+var z = y+x;
+
+var w = z+y;
+var b: 2 = 0;
+var a = x+1+2+3+4+5+6+7+8+9+10;
+out = out;

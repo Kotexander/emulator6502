@@ -148,8 +148,29 @@ enum AST {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Type {
     Uint(NonZeroU8),
+    // Ref(Ref),
     // Ref(Box<Self>),
 }
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// enum Ref {
+//     Var { ident: Rc<str>, typ: Type },
+//     Ref(Rc<Self>),
+// }
+// impl Ref {
+//     fn get_ident(&self) -> &Rc<str> {
+//         match self {
+//             Ref::Var { ident, typ: _ } => ident,
+//             Ref::Ref(r) => r.get_ident(),
+//         }
+//     }
+//     fn get_type(&self) -> &Type {
+//         match self {
+//             Ref::Var { ident: _, typ } => typ,
+//             Ref::Ref(r) => r.get_type(),
+//         }
+//     }
+// }
+
 enum AddrType {
     Abs(u16),
     Zp(u8),
@@ -159,7 +180,7 @@ struct Var {
     typ: Type,
 }
 
-type SymbolTable = HashMap<Rc<str>, Type>;
+type SymbolTable = HashMap<Rc<str>, Option<Type>>;
 type MemTable = HashMap<Rc<str>, Var>;
 
 #[derive(Debug)]
@@ -265,9 +286,11 @@ fn parse(code: &str) -> (Rc<Instruction>, SymbolTable) {
                 stack.pop();
                 stack.pop();
 
-                let typ = Type::Uint(NonZeroU8::new(n as u8).expect("size can't be zero"));
-
+                let typ = Some(Type::Uint(
+                    NonZeroU8::new(n as u8).expect("size can't be zero"),
+                ));
                 symbol_table.insert(ident.clone(), typ);
+
                 stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::ASSIGN {
                     ident,
                     expr,
@@ -284,7 +307,8 @@ fn parse(code: &str) -> (Rc<Instruction>, SymbolTable) {
                 stack.pop();
                 stack.pop();
 
-                symbol_table.insert(ident.clone(), Type::Uint(NonZeroU8::new(1).unwrap()));
+                symbol_table.insert(ident.clone(), None);
+
                 stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::ASSIGN {
                     ident,
                     expr,
@@ -353,46 +377,118 @@ fn parse(code: &str) -> (Rc<Instruction>, SymbolTable) {
         panic!("stack is bigger then 1");
     }
 }
-fn analyse_expression(expr: &Expression, symbol_table: &SymbolTable, imp_typ: Type) -> Type {
+
+/// `imp` used for implied typ incase type is not defined  
+///
+/// Returns the type of expression
+fn analyse_expression(
+    expr: &Expression,
+    symbol_table: &SymbolTable,
+    imp_typ: Option<Type>,
+) -> Result<Option<Type>, String> {
     match expr {
         Expression::CONSTANT { value: _, typ } => {
-            if let Some(typ) = typ.get() {
-                typ
-            } else {
-                // if let Some(imp_typ) = imp_typ {
-                typ.set(Some(imp_typ));
-                imp_typ
-                // } else {
-                // panic!("Could not determin type of constant");
-                // }
+            let expr_typ = typ.get();
+
+            match (imp_typ, expr_typ) {
+                (None, None) => Ok(None), // leave it for now (tried again later)
+                (_, Some(exp_typ)) => Ok(Some(exp_typ)), // ignore implied
+                (Some(imp_typ), None) => {
+                    typ.set(Some(imp_typ));
+                    Ok(Some(imp_typ))
+                } // set implied
+            }
+            // (Some(imp_typ), Some(exp_typ)) => {
+            // if imp_typ != exp_typ {
+            // Err(format!(
+            // "Implied type ({imp_typ:?}) doesn't match Constant type ({exp_typ:?})"
+            // ))
+            // } else {
+            // Ok(Some(exp_typ))
+            // }
+            // }
+        }
+        Expression::IDENTIFIER { ident } => {
+            let ident_typ = symbol_table
+                .get(ident)
+                .copied()
+                .ok_or(format!("Ident: ({ident}) doesn't exist"))?;
+
+            match (imp_typ, ident_typ) {
+                (None, None) => Ok(None), // leave it for now
+                (_, Some(_)) => Ok(ident_typ),
+                (Some(_), None) => Ok(imp_typ),
             }
         }
-        Expression::IDENTIFIER { ident } => symbol_table[ident],
-        Expression::BINOP { lhs, op: _, rhs } => {
-            let lhs_typ = analyse_expression(lhs, symbol_table, imp_typ);
-            let rhs_typ = analyse_expression(rhs, symbol_table, imp_typ);
-            if lhs_typ == rhs_typ {
-                lhs_typ
+        Expression::BINOP { lhs, op, rhs } => {
+            // get expected definate types
+            let lhs_typ1 = analyse_expression(lhs, symbol_table, imp_typ)?;
+            let rhs_typ1 = analyse_expression(rhs, symbol_table, imp_typ)?;
+
+            // set definate types
+            let lhs_typ2 = analyse_expression(lhs, symbol_table, rhs_typ1)?;
+            // .ok_or(format!("operad on lhs does not have a type"))?;
+            let rhs_typ2 = analyse_expression(rhs, symbol_table, lhs_typ1)?;
+            // .ok_or(format!("operad on rhs does not have a type"))?;
+
+            println!("{lhs_typ2:?} {rhs_typ2:?}");
+            // its fine of both sides are none
+            if lhs_typ2 == rhs_typ2 {
+                // Ok(Some(lhs_typ2))
+                Ok(lhs_typ2)
             } else {
-                panic!("bin op types don't match");
+                Err(format!(
+                    "types dont match on operation: ({lhs_typ2:?}) {op:?} ({rhs_typ2:?})"
+                ))
             }
         }
-        Expression::REFRENCE { ident } => Type::Uint(NonZeroU8::new(1).unwrap()),
+        Expression::REFRENCE { ident: _ } => Ok(Some(Type::Uint(NonZeroU8::new(1).unwrap()))),
     }
 }
-fn analyse_instruction(instruction: &Instruction, symbol_table: &SymbolTable) {
+fn analyse_instruction(
+    instruction: &Instruction,
+    symbol_table: &mut SymbolTable,
+) -> Result<(), String> {
     match instruction {
         Instruction::ASSIGN { ident, expr } => {
-            analyse_expression(expr, symbol_table, symbol_table[ident]);
+            let ident_typ = symbol_table
+                .get(ident)
+                .copied()
+                .ok_or(format!("`{ident}` doesn't exist"))?;
+            let expr_typ = analyse_expression(expr, symbol_table, ident_typ)?;
+            match (ident_typ, expr_typ) {
+                (None, None) => {
+                    let typ = Some(Type::Uint(NonZeroU8::new(1).unwrap()));
+                    *symbol_table.get_mut(ident).unwrap() = typ;
+                    analyse_expression(expr, symbol_table, typ)?;
+                    Ok(())
+                }
+                (None, Some(typ)) => {
+                    *symbol_table.get_mut(ident).unwrap() = Some(typ);
+                    Ok(())
+                }
+                (Some(_), None) => Err(format!("assign expression must have a type")),
+                (Some(ident_typ), Some(expr_typ)) => {
+                    if ident_typ != expr_typ {
+                        Err(format!(
+                            "assign expression type does not match var type: `{ident}: {ident_typ:?} = ({expr_typ:?})`"
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
+            }
         }
         Instruction::LOOP { block } => {
             if let Some(instructions) = block {
-                analyse_instruction(instructions, symbol_table);
+                analyse_instruction(instructions, symbol_table)
+            } else {
+                Ok(())
             }
         }
         Instruction::BIN { lhs, rhs } => {
-            analyse_instruction(lhs, symbol_table);
-            analyse_instruction(rhs, symbol_table);
+            analyse_instruction(lhs, symbol_table)?;
+            analyse_instruction(rhs, symbol_table)
         }
     }
 }
@@ -427,13 +523,7 @@ enum State {
     Sub,
 }
 
-fn gen_expression(
-    expr: &Expression,
-    ram: &mut Ram,
-    mem_table: &MemTable,
-    state: State,
-    // typ: Type,
-) {
+fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state: State) {
     match expr {
         Expression::CONSTANT { value, typ } => {
             if let Some(typ) = typ.get() {
@@ -533,6 +623,7 @@ fn gen_expression(
                         ram.insert_u8(i);
                     }
                 }
+                // op
                 match state {
                     State::Normal => {}
                     State::Add => {
@@ -645,44 +736,49 @@ fn main() {
     let code = std::fs::read_to_string(path).expect("Could not read file");
 
     let (instruction, mut symbol_table) = parse(&code);
-
-    let mut mem_table = HashMap::new();
-    mem_table.insert(
+    symbol_table.insert(
         Rc::from("out"),
-        Var {
-            addr: AddrType::Abs(0x5000),
-            typ: Type::Uint(NonZeroU8::new(2).unwrap()),
-        },
+        Some(Type::Uint(NonZeroU8::new(1).unwrap())),
     );
+    analyse_instruction(&instruction, &mut symbol_table).unwrap();
+    println!("{instruction:#?}");
 
+    // get max var size for working memory
     let mut i: u8 = 0;
-    for (id, typ) in symbol_table.iter() {
-        match typ {
+    for (ident, typ) in symbol_table.iter() {
+        match typ.expect(&format!("`{ident}` deos not have type")) {
             Type::Uint(size) => i = i.max(size.get()),
         }
     }
-    println!("Temp size: {i}");
+    println!("Working memory size: {i} bytes");
+
+    let mut mem_table = HashMap::new();
 
     for (ident, typ) in symbol_table.iter() {
-        println!("id: {ident } addr: {i}");
-        match typ {
+        match typ.expect(&format!("`{ident}` deos not have type")) {
             Type::Uint(size) => {
-                mem_table.insert(
-                    ident.clone(),
+                println!("ident: {ident }, addr: {i:#04X}, size: {size}");
+
+                let var = if &**ident == "out" {
                     Var {
+                        addr: AddrType::Abs(0x5000),
+                        typ: typ.unwrap(),
+                    }
+                } else {
+                    let var = Var {
                         addr: AddrType::Zp(i),
-                        typ: *typ,
-                    },
-                );
-                i += size.get();
+                        typ: typ.unwrap(),
+                    };
+                    i += size.get();
+                    var
+                };
+                mem_table.insert(ident.clone(), var);
             }
         }
     }
-    symbol_table.insert(Rc::from("out"), Type::Uint(NonZeroU8::new(1).unwrap()));
 
     let mut ram = Ram::new();
-    analyse_instruction(&instruction, &symbol_table);
-    println!("{instruction:#?}");
+
     gen_instruction(&instruction, &mut ram, &mem_table);
 
     let ptr = ram.ptr as u16;
