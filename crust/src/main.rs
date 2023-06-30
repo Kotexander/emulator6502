@@ -128,6 +128,11 @@ enum Instruction {
         ident: Rc<str>,
         expr: Rc<Expression>,
     },
+    DECLARE {
+        ident: Rc<str>,
+        expr: Rc<Expression>,
+        typ: Option<Type>,
+    },
     LOOP {
         block: Option<Rc<Self>>,
     },
@@ -180,7 +185,7 @@ struct Var {
     typ: Type,
 }
 
-type SymbolTable = HashMap<Rc<str>, Option<Type>>;
+type SymbolTable = HashMap<Rc<str>, Type>;
 type MemTable = HashMap<Rc<str>, Var>;
 
 #[derive(Debug)]
@@ -189,11 +194,11 @@ enum Node {
     AST(AST),
 }
 
-fn parse(code: &str) -> (Rc<Instruction>, SymbolTable) {
+fn parse(code: &str) -> Rc<Instruction> {
     let mut stack = Vec::new();
     let mut tokenizer = Tokenizer::new(code).peekable();
 
-    let mut symbol_table = SymbolTable::new();
+    // let mut symbol_table = SymbolTable::new();
 
     while let Some(token) = tokenizer.next() {
         stack.push(Node::Token(token));
@@ -289,11 +294,12 @@ fn parse(code: &str) -> (Rc<Instruction>, SymbolTable) {
                 let typ = Some(Type::Uint(
                     NonZeroU8::new(n as u8).expect("size can't be zero"),
                 ));
-                symbol_table.insert(ident.clone(), typ);
+                // symbol_table.insert(ident.clone(), typ);
 
-                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::ASSIGN {
+                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::DECLARE {
                     ident,
                     expr,
+                    typ,
                 }))));
                 true
             }
@@ -307,11 +313,13 @@ fn parse(code: &str) -> (Rc<Instruction>, SymbolTable) {
                 stack.pop();
                 stack.pop();
 
-                symbol_table.insert(ident.clone(), None);
+                // symbol_table.insert(ident.clone(), None);
+                let typ = None;
 
-                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::ASSIGN {
+                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::DECLARE {
                     ident,
                     expr,
+                    typ,
                 }))));
                 true
             }
@@ -364,12 +372,12 @@ fn parse(code: &str) -> (Rc<Instruction>, SymbolTable) {
     for node in &stack {
         println!("{node:#?}");
     }
-    println!("{symbol_table:#?}");
+    // println!("{symbol_table:#?}");
 
     if stack.len() == 1 {
         if let Node::AST(AST::INSTRUCTION(ast)) = stack.pop().unwrap() {
             // println!("{ast:#?}");
-            (ast, symbol_table)
+            ast
         } else {
             panic!("node is not ast or instruction")
         }
@@ -412,13 +420,15 @@ fn analyse_expression(
             let ident_typ = symbol_table
                 .get(ident)
                 .copied()
-                .ok_or(format!("Ident: ({ident}) doesn't exist"))?;
+                .ok_or(format!("undeclared variable: {ident}"))?;
 
-            match (imp_typ, ident_typ) {
-                (None, None) => Ok(None), // leave it for now
-                (_, Some(_)) => Ok(ident_typ),
-                (Some(_), None) => Ok(imp_typ),
-            }
+            Ok(Some(ident_typ))
+
+            // match (imp_typ, ident_typ) {
+            // (None, None) => Ok(None), // leave it for now
+            // (_, _) => Ok(Some(ident_typ)),
+            // (Some(_), _) => Ok(imp_typ),
+            // }
         }
         Expression::BINOP { lhs, op, rhs } => {
             // get expected definate types
@@ -450,28 +460,62 @@ fn analyse_instruction(
     symbol_table: &mut SymbolTable,
 ) -> Result<(), String> {
     match instruction {
+        Instruction::DECLARE { ident, expr, typ } => {
+            if symbol_table.get(ident).is_some() {
+                Err(format!("variable: ({ident}) already declared"))
+            } else {
+                let expr_typ = analyse_expression(expr, symbol_table, *typ)?;
+
+                match (typ, expr_typ) {
+                    (None, None) => {
+                        let typ = Type::Uint(NonZeroU8::new(1).unwrap());
+                        // *symbol_table.get_mut(ident).unwrap() = typ;
+                        analyse_expression(expr, symbol_table, Some(typ))?;
+                        symbol_table.insert(ident.clone(), typ);
+                        Ok(())
+                    }
+                    (None, Some(expr_typ)) => {
+                        symbol_table.insert(ident.clone(), expr_typ);
+                        // *symbol_table.get_mut(ident).unwrap() = expr_typ;
+                        Ok(())
+                    }
+                    (Some(_typ), None) => {
+                        // dont know about this one
+                        Err(format!("could not determine type of variable: ({ident})"))
+                    }
+                    (Some(typ), Some(expr_typ)) => {
+                        if *typ != expr_typ {
+                            Err(format!("variable: ({ident}) is set of type of: `{typ:?}` but got type `{expr_typ:?}`\n`var {ident}: {typ:?} = {expr_typ:?}`"))
+                        } else {
+                            symbol_table.insert(ident.clone(), *typ);
+                            Ok(())
+                        }
+                    }
+                }
+            }
+        }
         Instruction::ASSIGN { ident, expr } => {
             let ident_typ = symbol_table
                 .get(ident)
                 .copied()
-                .ok_or(format!("`{ident}` doesn't exist"))?;
-            let expr_typ = analyse_expression(expr, symbol_table, ident_typ)?;
+                .ok_or(format!("assignment of ({ident}) before declaration"))?;
+            let expr_typ = analyse_expression(expr, symbol_table, Some(ident_typ))?;
             match (ident_typ, expr_typ) {
-                (None, None) => {
-                    let typ = Some(Type::Uint(NonZeroU8::new(1).unwrap()));
-                    *symbol_table.get_mut(ident).unwrap() = typ;
-                    analyse_expression(expr, symbol_table, typ)?;
-                    Ok(())
-                }
-                (None, Some(typ)) => {
-                    *symbol_table.get_mut(ident).unwrap() = Some(typ);
-                    Ok(())
-                }
-                (Some(_), None) => Err(format!("assign expression must have a type")),
-                (Some(ident_typ), Some(expr_typ)) => {
+                // (None, None) => {
+                //     let typ = Some(Type::Uint(NonZeroU8::new(1).unwrap()));
+                //     *symbol_table.get_mut(ident).unwrap() = typ;
+                //     analyse_expression(expr, symbol_table, typ)?;
+                //     Ok(())
+                // }
+                // (None, Some(typ)) => {
+                // *symbol_table.get_mut(ident).unwrap() = Some(typ);
+                // Ok(())
+                // }
+                (_, None) => Err(format!("assign expression must have a type")),
+                (ident_typ, Some(expr_typ)) => {
                     if ident_typ != expr_typ {
                         Err(format!(
-                            "assign expression type does not match var type: `{ident}: {ident_typ:?} = ({expr_typ:?})`"
+                            "assign expression type does not match variable's type\n `{ident}: {ident_typ:?} = ({expr_typ:?})`"
                         ))
                     } else {
                         Ok(())
@@ -690,7 +734,7 @@ fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state:
 }
 fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTable) {
     match instruction {
-        Instruction::ASSIGN { ident, expr } => {
+        Instruction::ASSIGN { ident, expr } | Instruction::DECLARE { ident, expr, .. } => {
             gen_expression(expr, ram, mem_table, State::Normal);
             let var = &mem_table[ident];
             let size = match var.typ {
@@ -735,18 +779,16 @@ fn main() {
     let path = std::path::Path::new(&file);
     let code = std::fs::read_to_string(path).expect("Could not read file");
 
-    let (instruction, mut symbol_table) = parse(&code);
-    symbol_table.insert(
-        Rc::from("out"),
-        Some(Type::Uint(NonZeroU8::new(1).unwrap())),
-    );
+    let instruction = parse(&code);
+    let mut symbol_table = SymbolTable::new();
+    symbol_table.insert(Rc::from("out"), Type::Uint(NonZeroU8::new(1).unwrap()));
     analyse_instruction(&instruction, &mut symbol_table).unwrap();
     println!("{instruction:#?}");
 
     // get max var size for working memory
     let mut i: u8 = 0;
-    for (ident, typ) in symbol_table.iter() {
-        match typ.expect(&format!("`{ident}` deos not have type")) {
+    for (_ident, typ) in symbol_table.iter() {
+        match typ {
             Type::Uint(size) => i = i.max(size.get()),
         }
     }
@@ -755,19 +797,19 @@ fn main() {
     let mut mem_table = HashMap::new();
 
     for (ident, typ) in symbol_table.iter() {
-        match typ.expect(&format!("`{ident}` deos not have type")) {
+        match typ {
             Type::Uint(size) => {
-                println!("ident: {ident }, addr: {i:#04X}, size: {size}");
+                println!("ident: {ident }, addr: {i:#04X}, size: {size} type: {typ:?}");
 
                 let var = if &**ident == "out" {
                     Var {
                         addr: AddrType::Abs(0x5000),
-                        typ: typ.unwrap(),
+                        typ: *typ,
                     }
                 } else {
                     let var = Var {
                         addr: AddrType::Zp(i),
-                        typ: typ.unwrap(),
+                        typ: *typ,
                     };
                     i += size.get();
                     var
