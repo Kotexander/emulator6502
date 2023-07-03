@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::num::NonZeroU8;
 use std::rc::Rc;
@@ -108,7 +108,7 @@ impl<'a> Iterator for Tokenizer<'a> {
 enum Expression {
     CONSTANT {
         value: usize,
-        typ: Cell<Option<Type>>,
+        typ: RefCell<Option<Type>>,
     },
     IDENTIFIER {
         ident: Rc<str>,
@@ -150,11 +150,11 @@ enum AST {
     BLOCK(Option<Rc<Instruction>>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Type {
     Uint(NonZeroU8),
+    Ref(Box<Self>),
     // Ref(Ref),
-    // Ref(Box<Self>),
 }
 // #[derive(Debug, Clone, PartialEq, Eq)]
 // enum Ref {
@@ -192,6 +192,7 @@ type MemTable = HashMap<Rc<str>, Var>;
 enum Node {
     Token(Token),
     AST(AST),
+    Type(Type),
 }
 
 fn parse(code: &str) -> Rc<Instruction> {
@@ -224,7 +225,7 @@ fn parse(code: &str) -> Rc<Instruction> {
                     stack.pop();
                     stack.push(Node::AST(AST::EXPRESSION(Rc::new(Expression::CONSTANT {
                         value: n,
-                        typ: Cell::new(None),
+                        typ: RefCell::new(None),
                     }))));
                     true
                 }
@@ -396,13 +397,13 @@ fn analyse_expression(
 ) -> Result<Option<Type>, String> {
     match expr {
         Expression::CONSTANT { value: _, typ } => {
-            let expr_typ = typ.get();
+            let expr_typ = typ.borrow().clone();
 
             match (imp_typ, expr_typ) {
                 (None, None) => Ok(None), // leave it for now (tried again later)
                 (_, Some(exp_typ)) => Ok(Some(exp_typ)), // ignore implied
                 (Some(imp_typ), None) => {
-                    typ.set(Some(imp_typ));
+                    *typ.borrow_mut() = Some(imp_typ.clone());
                     Ok(Some(imp_typ))
                 } // set implied
             }
@@ -419,8 +420,9 @@ fn analyse_expression(
         Expression::IDENTIFIER { ident } => {
             let ident_typ = symbol_table
                 .get(ident)
-                .copied()
-                .ok_or(format!("undeclared variable: {ident}"))?;
+                // .copied()
+                .ok_or(format!("undeclared variable: {ident}"))?
+                .clone();
 
             Ok(Some(ident_typ))
 
@@ -432,7 +434,7 @@ fn analyse_expression(
         }
         Expression::BINOP { lhs, op, rhs } => {
             // get expected definate types
-            let lhs_typ1 = analyse_expression(lhs, symbol_table, imp_typ)?;
+            let lhs_typ1 = analyse_expression(lhs, symbol_table, imp_typ.clone())?;
             let rhs_typ1 = analyse_expression(rhs, symbol_table, imp_typ)?;
 
             // set definate types
@@ -441,7 +443,6 @@ fn analyse_expression(
             let rhs_typ2 = analyse_expression(rhs, symbol_table, lhs_typ1)?;
             // .ok_or(format!("operad on rhs does not have a type"))?;
 
-            println!("{lhs_typ2:?} {rhs_typ2:?}");
             // its fine of both sides are none
             if lhs_typ2 == rhs_typ2 {
                 // Ok(Some(lhs_typ2))
@@ -464,13 +465,13 @@ fn analyse_instruction(
             if symbol_table.get(ident).is_some() {
                 Err(format!("variable: ({ident}) already declared"))
             } else {
-                let expr_typ = analyse_expression(expr, symbol_table, *typ)?;
+                let expr_typ = analyse_expression(expr, symbol_table, typ.clone())?;
 
                 match (typ, expr_typ) {
                     (None, None) => {
                         let typ = Type::Uint(NonZeroU8::new(1).unwrap());
                         // *symbol_table.get_mut(ident).unwrap() = typ;
-                        analyse_expression(expr, symbol_table, Some(typ))?;
+                        analyse_expression(expr, symbol_table, Some(typ.clone()))?;
                         symbol_table.insert(ident.clone(), typ);
                         Ok(())
                     }
@@ -487,7 +488,7 @@ fn analyse_instruction(
                         if *typ != expr_typ {
                             Err(format!("variable: ({ident}) is set of type of: `{typ:?}` but got type `{expr_typ:?}`\n`var {ident}: {typ:?} = {expr_typ:?}`"))
                         } else {
-                            symbol_table.insert(ident.clone(), *typ);
+                            symbol_table.insert(ident.clone(), typ.clone());
                             Ok(())
                         }
                     }
@@ -497,9 +498,9 @@ fn analyse_instruction(
         Instruction::ASSIGN { ident, expr } => {
             let ident_typ = symbol_table
                 .get(ident)
-                .copied()
-                .ok_or(format!("assignment of ({ident}) before declaration"))?;
-            let expr_typ = analyse_expression(expr, symbol_table, Some(ident_typ))?;
+                .ok_or(format!("assignment of ({ident}) before declaration"))?
+                .clone();
+            let expr_typ = analyse_expression(expr, symbol_table, Some(ident_typ.clone()))?;
             match (ident_typ, expr_typ) {
                 // (None, None) => {
                 //     let typ = Some(Type::Uint(NonZeroU8::new(1).unwrap()));
@@ -570,10 +571,11 @@ enum State {
 fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state: State) {
     match expr {
         Expression::CONSTANT { value, typ } => {
-            if let Some(typ) = typ.get() {
+            if let Some(typ) = typ.borrow().clone() {
                 let mut bytes = value.to_le_bytes().to_vec();
                 let size = match typ {
                     Type::Uint(size) => size.get(),
+                    Type::Ref(_) => todo!(),
                 };
                 bytes.resize(size as usize, 0);
 
@@ -629,6 +631,7 @@ fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state:
             let var = &mem_table[ident];
             let size = match var.typ {
                 Type::Uint(size) => size.get(),
+                Type::Ref(_) => todo!(),
             };
 
             // set carry bit (if needed)
@@ -723,7 +726,7 @@ fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state:
             gen_expression(
                 &Expression::CONSTANT {
                     value: p as usize,
-                    typ: Cell::new(Some(Type::Uint(NonZeroU8::new(1).unwrap()))),
+                    typ: RefCell::new(Some(Type::Uint(NonZeroU8::new(1).unwrap()))),
                 },
                 ram,
                 mem_table,
@@ -739,6 +742,7 @@ fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTabl
             let var = &mem_table[ident];
             let size = match var.typ {
                 Type::Uint(size) => size.get(),
+                Type::Ref(_) => todo!(),
             };
             for i in 0..size {
                 ram.insert_u8(0xA5); // LDA_ZP0
@@ -782,6 +786,10 @@ fn main() {
     let instruction = parse(&code);
     let mut symbol_table = SymbolTable::new();
     symbol_table.insert(Rc::from("out"), Type::Uint(NonZeroU8::new(1).unwrap()));
+    // symbol_table.insert(
+    // Rc::from("out"),
+    // Type::Ref(Box::new(Type::Uint(NonZeroU8::new(1).unwrap()))),
+    // );
     analyse_instruction(&instruction, &mut symbol_table).unwrap();
     println!("{instruction:#?}");
 
@@ -790,6 +798,7 @@ fn main() {
     for (_ident, typ) in symbol_table.iter() {
         match typ {
             Type::Uint(size) => i = i.max(size.get()),
+            Type::Ref(_) => todo!(),
         }
     }
     println!("Working memory size: {i} bytes");
@@ -804,18 +813,19 @@ fn main() {
                 let var = if &**ident == "out" {
                     Var {
                         addr: AddrType::Abs(0x5000),
-                        typ: *typ,
+                        typ: typ.clone(),
                     }
                 } else {
                     let var = Var {
                         addr: AddrType::Zp(i),
-                        typ: *typ,
+                        typ: typ.clone(),
                     };
                     i += size.get();
                     var
                 };
                 mem_table.insert(ident.clone(), var);
             }
+            Type::Ref(_) => todo!(),
         }
     }
 
