@@ -1,14 +1,3 @@
-// mod Flags6502 {
-//     pub const C: u8 = 1 << 0; // Carry            1 = true
-//     pub const Z: u8 = 1 << 1; // Zero             1 = true
-//     pub const I: u8 = 1 << 2; // IRQB ennable     1 = disable
-//     pub const D: u8 = 1 << 3; // Decimal mode     1 = true
-//     pub const B: u8 = 1 << 4; // BRK command      1 = BRK, 0 = IRQB
-//     pub const U: u8 = 1 << 5; // Unused
-//     pub const V: u8 = 1 << 6; // Overflow         1 = true
-//     pub const N: u8 = 1 << 7; // Negative         1 = neg
-// }
-
 enum Flags6502 {
     C,
     Z,

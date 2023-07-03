@@ -1,7 +1,7 @@
-var x:4 = 420;
-var y:4 = 69;
+var x:u4 = 420;
+var y:u4 = 69;
 
-var a:4 = 420-69;
+var a:u4 = 420-69;
 out = &a;
 
 a = x-0;
