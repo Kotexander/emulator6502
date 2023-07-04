@@ -7,5 +7,5 @@ loop {
     a = b;
     b = c;
 
-    out = &c;
+    zp_out_u32 = &c;
 }

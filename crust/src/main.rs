@@ -84,7 +84,14 @@ fn analyse_expression(
                 Err(format!("types dont match on operation: `{lhs} {op} {rhs}`"))
             }
         }
-        Expression::REFRENCE { ident: _ } => Ok(Some(Type::Uint(NonZeroU8::new(1).unwrap()))),
+        Expression::REFRENCE { ident } => {
+            let ident_typ = symbol_table
+                .get(ident)
+                .ok_or(format!("undeclared variable: {ident}"))?
+                .clone();
+
+            Ok(Some(Type::Ref(Rc::new(ident_typ))))
+        }
     }
 }
 fn analyse_instruction(
@@ -339,10 +346,10 @@ fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state:
                         bytes.resize(size as usize, 0);
                         const_anyint(ram, &bytes, &state);
                     }
-                    Type::Ref(_) => todo!(),
+                    Type::Ref(_) => panic!("constant can't have a reference as it's type"),
                 };
             } else {
-                panic!("couldn't generate code");
+                panic!("error while generating code for a constant");
             }
         }
         Expression::IDENTIFIER { ident } => {
@@ -358,10 +365,15 @@ fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state:
             gen_expression(rhs, ram, mem_table, state);
         }
         Expression::REFRENCE { ident } => {
-            let p = match mem_table[ident].addr {
-                AddrType::Abs(_) => panic!("absolute references aren't supported"),
+            let var = mem_table.get(ident).expect(&format!(
+                "all identifiers should be defined during code generation but ({ident}) was not"
+            ));
+
+            let p = match var.addr {
+                AddrType::Abs(_) => todo!("haven't figured out how to check if references lengths match yet; therefore, only zero point references are supported"),
                 AddrType::Zp(p) => p,
             };
+
             gen_expression(
                 &Expression::CONSTANT {
                     value: p as usize,
@@ -381,7 +393,7 @@ fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTabl
             let var = &mem_table[ident];
             let size = match var.typ {
                 Type::Uint(size) | Type::Int(size) => size.get(),
-                Type::Ref(_) => todo!(),
+                Type::Ref(_) => 2, // SUPER TEMPORARY
             };
             for i in 0..size {
                 ram.insert_u8(0xA5); // LDA_ZP0
@@ -417,33 +429,28 @@ fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTabl
     }
 }
 
-fn main() {
-    let file = std::env::args().nth(1).expect("No file given");
-    let path = std::path::Path::new(&file);
-    let code = std::fs::read_to_string(path).expect("Could not read file");
-
+fn compile(code: &str) -> Result<Ram, String> {
     let instruction = parse(&code);
     let mut symbol_table = SymbolTable::new();
     // symbol_table.insert(Rc::from("out"), Type::Uint(NonZeroU8::new(1).unwrap()));
     symbol_table.insert(
-        Rc::from("out"),
+        Rc::from("zp_out_u32"),
         Type::Ref(Rc::new(Type::Uint(NonZeroU8::new(4).unwrap()))),
     );
-    match analyse_instruction(&instruction, &mut symbol_table) {
-        Ok(_) => {}
-        Err(e) => {
-            println!("{e}");
-            return;
-        }
-    };
+    analyse_instruction(&instruction, &mut symbol_table)?;
     println!("{instruction:#?}");
 
     // get max var size for working memory
     let mut i: u8 = 0;
     for (_ident, typ) in symbol_table.iter() {
         match typ {
-            Type::Uint(size) | Type::Int(size) => i = i.max(size.get()),
-            Type::Ref(_) => todo!(),
+            Type::Uint(size) | Type::Int(size) => {
+                i = i.max(size.get());
+            }
+            Type::Ref(_) => {
+                // TODO: figure out a way to not assume worst case senerio
+                i = i.max(2);
+            }
         }
     }
     println!("Working memory size: {i} bytes");
@@ -453,19 +460,19 @@ fn main() {
     for (ident, typ) in symbol_table.iter() {
         match typ {
             Type::Uint(size) | Type::Int(size) => {
-                let var = if &**ident == "out" {
-                    Var {
-                        addr: AddrType::Abs(0x5000),
-                        typ: typ.clone(),
-                    }
-                } else {
-                    let var = Var {
-                        addr: AddrType::Zp(i),
-                        typ: typ.clone(),
-                    };
-                    i += size.get();
-                    var
+                // let var = if &**ident == "out" {
+                // Var {
+                // addr: AddrType::Abs(0x5000),
+                // typ: typ.clone(),
+                // }
+                // } else {
+                let var = Var {
+                    addr: AddrType::Zp(i),
+                    typ: typ.clone(),
                 };
+                i += size.get();
+                // var
+                // };
                 let addr = match var.addr {
                     AddrType::Abs(addr) => format!("{addr:#06X}"),
                     AddrType::Zp(addr) => format!("{addr:#04X}"),
@@ -473,7 +480,22 @@ fn main() {
                 println!("ident: {ident}, addr: {addr}, size: {size} type: {typ}");
                 mem_table.insert(ident.clone(), var);
             }
-            Type::Ref(_) => todo!(),
+            Type::Ref(_) => {
+                if &**ident == "zp_out_u32" {
+                    let var = Var {
+                        addr: AddrType::Abs(0x5000),
+                        typ: typ.clone(),
+                    };
+                    let addr = match var.addr {
+                        AddrType::Abs(addr) => format!("{addr:#06X}"),
+                        AddrType::Zp(addr) => format!("{addr:#04X}"),
+                    };
+                    println!("ident: {ident}, addr: {addr}, size: 2 type: {typ}");
+                    mem_table.insert(ident.clone(), var);
+                } else {
+                    todo!();
+                }
+            }
         }
     }
 
@@ -486,15 +508,28 @@ fn main() {
     ram.insert_u8(0x4C); // JMP_ABS
     ram.insert_u16(ptr);
 
-    std::fs::write(
-        format!(
-            "{}.bin",
-            path.file_stem()
-                .expect("Could not get file name")
-                .to_str()
-                .unwrap()
-        ),
-        ram.data,
-    )
-    .unwrap();
+    Ok(ram)
+}
+
+fn main() {
+    let file = std::env::args().nth(1).expect("No file given");
+    let path = std::path::Path::new(&file);
+    let code = std::fs::read_to_string(path).expect("Could not read file");
+
+    match compile(&code) {
+        Ok(ram) => {
+            std::fs::write(
+                format!(
+                    "{}.hex",
+                    path.file_stem()
+                        .expect("Could not get file name")
+                        .to_str()
+                        .unwrap()
+                ),
+                ram.data,
+            )
+            .unwrap();
+        }
+        Err(err) => println!("{err}"),
+    }
 }

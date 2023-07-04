@@ -39,12 +39,19 @@ impl Display for Operator {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Addr {
+    ABS,
+    ZPG,
+}
+
 #[derive(Debug, Clone)]
 pub enum Token {
     NUMBER(usize),
     OPERATOR(Operator),
     IDENTIFIER(Rc<str>),
     TYPE(Type),
+    ADDR(Addr),
     VAR,
     ASSIGN,
     SEMICOLON,
@@ -132,8 +139,10 @@ impl<'a> Iterator for Tokenizer<'a> {
 
         match usize::from_str(token) {
             Ok(num) => Some(Token::NUMBER(num)),
-            _ if token == "loop" => Some(Token::LOOP),
+            _ if token == "abs" => Some(Token::ADDR(Addr::ABS)),
+            _ if token == "zpg" => Some(Token::ADDR(Addr::ZPG)),
             _ if token == "var" => Some(Token::VAR),
+            _ if token == "loop" => Some(Token::LOOP),
             _ => {
                 if let Some(typ) = typ(token) {
                     Some(Token::TYPE(typ))
