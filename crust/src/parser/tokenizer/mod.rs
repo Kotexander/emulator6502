@@ -10,13 +10,14 @@ use std::str::FromStr;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Uint(NonZeroU8),
-    // Int(NonZeroU8),
+    Int(NonZeroU8),
     Ref(Rc<Self>),
 }
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Uint(n) => write!(f, "u{n}"),
+            Type::Int(n) => write!(f, "i{n}"),
             Type::Ref(typ) => write!(f, "&{typ}"),
         }
     }
@@ -73,11 +74,16 @@ fn symbol(c: char) -> Option<Token> {
 }
 fn typ(s: &str) -> Option<Type> {
     let (c, n) = s.split_at(1);
-    if let "u" = c {
-        let n = NonZeroU8::new(u8::from_str(n).ok()?)?;
-        Some(Type::Uint(n))
-    } else {
-        None
+    match c {
+        "u" => {
+            let n = NonZeroU8::new(u8::from_str(n).ok()?)?;
+            Some(Type::Uint(n))
+        }
+        "i" => {
+            let n = NonZeroU8::new(u8::from_str(n).ok()?)?;
+            Some(Type::Int(n))
+        }
+        _ => None,
     }
 }
 

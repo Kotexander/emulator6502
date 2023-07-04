@@ -1287,9 +1287,8 @@ impl Bus {
             // println!("u64: {udata} i64: {idata}");
 
             let data: [u8; 4] = (&self.ram[ptr..(ptr + 4)]).try_into().unwrap();
-            let idata = i32::from_le_bytes(data);
             let udata = u32::from_le_bytes(data);
-            println!("u32: {udata} i32: {idata}");
+            println!("{udata}");
         }
 
         self.ram[addr as usize] = data;

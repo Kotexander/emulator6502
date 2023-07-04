@@ -117,7 +117,7 @@ fn analyse_instruction(
                     }
                     (Some(typ), Some(expr_typ)) => {
                         if *typ != expr_typ {
-                            Err(format!("variable: ({ident}) is set of type of: `{typ:?}` but got type `{expr_typ:?}`\n`var {ident}: {typ:?} = {expr_typ:?}`"))
+                            Err(format!("variable: ({ident}) is set of type of: `{typ}` but got type `{expr_typ}`\n`var {ident}: {typ} = {expr_typ}`"))
                         } else {
                             symbol_table.insert(ident.clone(), typ.clone());
                             Ok(())
@@ -147,7 +147,7 @@ fn analyse_instruction(
                 (ident_typ, Some(expr_typ)) => {
                     if ident_typ != expr_typ {
                         Err(format!(
-                            "assign expression type does not match variable's type\n `{ident}: {ident_typ:?} = ({expr_typ:?})`"
+                            "assign expression type does not match variable's type\n`{ident}:({ident_typ}) = ({expr_typ});`"
                         ))
                     } else {
                         Ok(())
@@ -199,147 +199,155 @@ enum State {
     Sub,
 }
 
+fn const_anyint(ram: &mut Ram, bytes: &[u8], state: &State) {
+    let size = bytes.len() as u8;
+    // set carry bit (if needed)
+    match state {
+        State::Normal => {}
+        State::Add => {
+            ram.insert_u8(0x18); // CLC_IMP
+        }
+        State::Sub => {
+            ram.insert_u8(0x38); // SEC_IMP
+        }
+    }
+
+    // loop bytes
+    for i in 0..size {
+        // load
+        match state {
+            State::Normal => {
+                // load const byte
+                ram.insert_u8(0xA9); // LDA_IMM
+                ram.insert_u8(bytes[i as usize]);
+            }
+            _ => {
+                // load byte
+                ram.insert_u8(0xA5); // LDA_ZP0
+                ram.insert_u8(i);
+            }
+        }
+        // op
+        match state {
+            State::Normal => {}
+            State::Add => {
+                // add const byte
+                ram.insert_u8(0x69); // ADC_IMM
+                ram.insert_u8(bytes[i as usize]);
+            }
+            State::Sub => {
+                // sub const byte
+                ram.insert_u8(0xE9); // SBC_IMM
+                ram.insert_u8(bytes[i as usize]);
+            }
+        }
+        // save byte
+        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(i);
+    }
+}
+fn ident_anyint(ram: &mut Ram, var: &Var, state: &State) {
+    let size = match var.typ {
+        Type::Uint(size) | Type::Int(size) => size.get(),
+        Type::Ref(_) => todo!(),
+    };
+    // set carry bit (if needed)
+    match state {
+        State::Normal => {}
+        State::Add => {
+            ram.insert_u8(0x18); // CLC_IMP
+        }
+        State::Sub => {
+            ram.insert_u8(0x38); // SEC_IMP
+        }
+    }
+
+    // loop bytes
+    for i in 0..size {
+        // load
+        match state {
+            State::Normal => {
+                // load ident byte
+                match var.addr {
+                    AddrType::Abs(p) => {
+                        let p = p + i as u16;
+                        ram.insert_u8(0xAD); // LDA_ABS
+                        ram.insert_u16(p);
+                    }
+                    AddrType::Zp(p) => {
+                        let p = p + i;
+                        ram.insert_u8(0xA5); // LDA_ZP0
+                        ram.insert_u8(p);
+                    }
+                };
+            }
+            _ => {
+                // load byte
+                ram.insert_u8(0xA5); // LDA_ZP0
+                ram.insert_u8(i);
+            }
+        }
+        // op
+        match state {
+            State::Normal => {}
+            State::Add => {
+                // add ident byte
+                match var.addr {
+                    AddrType::Abs(p) => {
+                        let p = p + i as u16;
+                        ram.insert_u8(0x6D); // ADC_ABS
+                        ram.insert_u16(p);
+                    }
+                    AddrType::Zp(p) => {
+                        let p = p + i;
+                        ram.insert_u8(0x65); // ADC_ZP0
+                        ram.insert_u8(p);
+                    }
+                }
+            }
+            State::Sub => {
+                // sub ident byte
+                match var.addr {
+                    AddrType::Abs(p) => {
+                        let p = p + i as u16;
+                        ram.insert_u8(0xED); // SBC_ABS
+                        ram.insert_u16(p);
+                    }
+                    AddrType::Zp(p) => {
+                        let p = p + i;
+                        ram.insert_u8(0xE5); // SBC_ZP0
+                        ram.insert_u8(p);
+                    }
+                }
+            }
+        }
+
+        // save byte
+        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(i);
+    }
+}
+
 fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state: State) {
     match expr {
         Expression::CONSTANT { value, typ } => {
             if let Some(typ) = typ.borrow().clone() {
                 let mut bytes = value.to_le_bytes().to_vec();
-                let size = match typ {
-                    Type::Uint(size) => size.get(),
+                match typ {
+                    Type::Uint(size) | Type::Int(size) => {
+                        let size = size.get();
+                        bytes.resize(size as usize, 0);
+                        const_anyint(ram, &bytes, &state);
+                    }
                     Type::Ref(_) => todo!(),
                 };
-                bytes.resize(size as usize, 0);
-
-                // set carry bit (if needed)
-                match state {
-                    State::Normal => {}
-                    State::Add => {
-                        ram.insert_u8(0x18); // CLC_IMP
-                    }
-                    State::Sub => {
-                        ram.insert_u8(0x38); // SEC_IMP
-                    }
-                }
-
-                // loop bytes
-                for i in 0..size {
-                    // load
-                    match state {
-                        State::Normal => {
-                            // load const byte
-                            ram.insert_u8(0xA9); // LDA_IMM
-                            ram.insert_u8(bytes[i as usize]);
-                        }
-                        _ => {
-                            // load byte
-                            ram.insert_u8(0xA5); // LDA_ZP0
-                            ram.insert_u8(i);
-                        }
-                    }
-                    // op
-                    match state {
-                        State::Normal => {}
-                        State::Add => {
-                            // add const byte
-                            ram.insert_u8(0x69); // ADC_IMM
-                            ram.insert_u8(bytes[i as usize]);
-                        }
-                        State::Sub => {
-                            // sub const byte
-                            ram.insert_u8(0xE9); // SBC_IMM
-                            ram.insert_u8(bytes[i as usize]);
-                        }
-                    }
-                    // save byte
-                    ram.insert_u8(0x85); // STA_ZP0
-                    ram.insert_u8(i);
-                }
             } else {
                 panic!("couldn't generate code");
             }
         }
         Expression::IDENTIFIER { ident } => {
             let var = &mem_table[ident];
-            let size = match var.typ {
-                Type::Uint(size) => size.get(),
-                Type::Ref(_) => todo!(),
-            };
-
-            // set carry bit (if needed)
-            match state {
-                State::Normal => {}
-                State::Add => {
-                    ram.insert_u8(0x18); // CLC_IMP
-                }
-                State::Sub => {
-                    ram.insert_u8(0x38); // SEC_IMP
-                }
-            }
-
-            // loop bytes
-            for i in 0..size {
-                // load
-                match state {
-                    State::Normal => {
-                        // load ident byte
-                        match var.addr {
-                            AddrType::Abs(p) => {
-                                let p = p + i as u16;
-                                ram.insert_u8(0xAD); // LDA_ABS
-                                ram.insert_u16(p);
-                            }
-                            AddrType::Zp(p) => {
-                                let p = p + i;
-                                ram.insert_u8(0xA5); // LDA_ZP0
-                                ram.insert_u8(p);
-                            }
-                        };
-                    }
-                    _ => {
-                        // load byte
-                        ram.insert_u8(0xA5); // LDA_ZP0
-                        ram.insert_u8(i);
-                    }
-                }
-                // op
-                match state {
-                    State::Normal => {}
-                    State::Add => {
-                        // add ident byte
-                        match var.addr {
-                            AddrType::Abs(p) => {
-                                let p = p + i as u16;
-                                ram.insert_u8(0x6D); // ADC_ABS
-                                ram.insert_u16(p);
-                            }
-                            AddrType::Zp(p) => {
-                                let p = p + i;
-                                ram.insert_u8(0x65); // ADC_ZP0
-                                ram.insert_u8(p);
-                            }
-                        }
-                    }
-                    State::Sub => {
-                        // sub ident byte
-                        match var.addr {
-                            AddrType::Abs(p) => {
-                                let p = p + i as u16;
-                                ram.insert_u8(0xED); // SBC_ABS
-                                ram.insert_u16(p);
-                            }
-                            AddrType::Zp(p) => {
-                                let p = p + i;
-                                ram.insert_u8(0xE5); // SBC_ZP0
-                                ram.insert_u8(p);
-                            }
-                        }
-                    }
-                }
-
-                // save byte
-                ram.insert_u8(0x85); // STA_ZP0
-                ram.insert_u8(i);
-            }
+            ident_anyint(ram, var, &state);
         }
         Expression::BINOP { lhs, op, rhs } => {
             gen_expression(lhs, ram, mem_table, state);
@@ -372,7 +380,7 @@ fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTabl
             gen_expression(expr, ram, mem_table, State::Normal);
             let var = &mem_table[ident];
             let size = match var.typ {
-                Type::Uint(size) => size.get(),
+                Type::Uint(size) | Type::Int(size) => size.get(),
                 Type::Ref(_) => todo!(),
             };
             for i in 0..size {
@@ -416,19 +424,25 @@ fn main() {
 
     let instruction = parse(&code);
     let mut symbol_table = SymbolTable::new();
-    symbol_table.insert(Rc::from("out"), Type::Uint(NonZeroU8::new(1).unwrap()));
-    // symbol_table.insert(
-    // Rc::from("out"),
-    // Type::Ref(Box::new(Type::Uint(NonZeroU8::new(1).unwrap()))),
-    // );
-    analyse_instruction(&instruction, &mut symbol_table).unwrap();
+    // symbol_table.insert(Rc::from("out"), Type::Uint(NonZeroU8::new(1).unwrap()));
+    symbol_table.insert(
+        Rc::from("out"),
+        Type::Ref(Rc::new(Type::Uint(NonZeroU8::new(4).unwrap()))),
+    );
+    match analyse_instruction(&instruction, &mut symbol_table) {
+        Ok(_) => {}
+        Err(e) => {
+            println!("{e}");
+            return;
+        }
+    };
     println!("{instruction:#?}");
 
     // get max var size for working memory
     let mut i: u8 = 0;
     for (_ident, typ) in symbol_table.iter() {
         match typ {
-            Type::Uint(size) => i = i.max(size.get()),
+            Type::Uint(size) | Type::Int(size) => i = i.max(size.get()),
             Type::Ref(_) => todo!(),
         }
     }
@@ -438,9 +452,7 @@ fn main() {
 
     for (ident, typ) in symbol_table.iter() {
         match typ {
-            Type::Uint(size) => {
-                println!("ident: {ident }, addr: {i:#04X}, size: {size} type: {typ}");
-
+            Type::Uint(size) | Type::Int(size) => {
                 let var = if &**ident == "out" {
                     Var {
                         addr: AddrType::Abs(0x5000),
@@ -454,6 +466,11 @@ fn main() {
                     i += size.get();
                     var
                 };
+                let addr = match var.addr {
+                    AddrType::Abs(addr) => format!("{addr:#06X}"),
+                    AddrType::Zp(addr) => format!("{addr:#04X}"),
+                };
+                println!("ident: {ident}, addr: {addr}, size: {size} type: {typ}");
                 mem_table.insert(ident.clone(), var);
             }
             Type::Ref(_) => todo!(),
