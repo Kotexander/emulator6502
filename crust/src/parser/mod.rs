@@ -12,10 +12,10 @@ pub enum Expression {
         typ: RefCell<Option<Type>>,
     },
     IDENTIFIER {
-        ident: Rc<str>,
+        id: Rc<str>,
     },
     REFRENCE {
-        ident: Rc<str>,
+        id: Rc<str>,
     },
     BINOP {
         lhs: Rc<Self>,
@@ -26,13 +26,14 @@ pub enum Expression {
 #[derive(Debug, Clone)]
 pub enum Instruction {
     ASSIGN {
-        ident: Rc<str>,
+        id: Rc<str>,
         expr: Rc<Expression>,
     },
     DECLARE {
-        ident: Rc<str>,
+        id: Rc<str>,
         expr: Rc<Expression>,
         typ: Option<Type>,
+        addr: AddrType,
     },
     LOOP {
         block: Option<Rc<Self>>,
@@ -81,7 +82,7 @@ pub fn parse(code: &str) -> Rc<Instruction> {
                 if let Some(Token::ASSIGN) = tokenizer.peek() {
                     false
                 } else {
-                    let n = *n;
+                    let n = n.clone();
                     stack.pop();
                     stack.push(Node::AST(AST::EXPRESSION(Rc::new(Expression::CONSTANT {
                         value: n,
@@ -96,26 +97,32 @@ pub fn parse(code: &str) -> Rc<Instruction> {
                 stack.push(Node::Type(typ));
                 true
             }
-            [.., Node::Token(Token::REFRENCE), Node::Token(Token::IDENTIFIER(ident))] => {
-                let ident = ident.clone();
+            [.., Node::Token(Token::POINTER(addr)), Node::Type(typ)] => {
+                let typ = Rc::new(typ.clone());
+                let addr = addr.clone();
+                stack.pop();
+                stack.pop();
+                let typ = Type::Ref { typ, addr };
+                stack.push(Node::Type(typ));
+                true
+            }
+            [.., Node::Token(Token::REFRENCE), Node::Token(Token::IDENTIFIER(id))] => {
+                let id = id.clone();
                 stack.pop();
                 stack.pop();
                 stack.push(Node::AST(AST::EXPRESSION(Rc::new(Expression::REFRENCE {
-                    ident,
+                    id,
                 }))));
                 true
             }
-            [.., Node::Token(Token::IDENTIFIER(ident))] => {
+            [.., Node::Token(Token::IDENTIFIER(id))] => {
                 if let Some(Token::ASSIGN | Token::COLON) = tokenizer.peek() {
                     false
                 } else {
-                    let ident = ident.clone();
+                    let id = id.clone();
                     stack.pop();
                     stack.push(Node::AST(AST::EXPRESSION(Rc::new(
-                        Expression::IDENTIFIER {
-                            ident,
-                            // typ: None
-                        },
+                        Expression::IDENTIFIER { id },
                     ))));
                     true
                 }
@@ -133,7 +140,7 @@ pub fn parse(code: &str) -> Rc<Instruction> {
             {
                 let lhs = lhs.clone();
                 let rhs = rhs.clone();
-                let op = *op;
+                let op = op.clone();
                 stack.pop();
                 stack.pop();
                 stack.pop();
@@ -145,9 +152,55 @@ pub fn parse(code: &str) -> Rc<Instruction> {
 
                 true
             }
-            [.., Node::Token(Token::VAR), Node::Token(Token::IDENTIFIER(ident)), Node::Token(Token::COLON), Node::Type(typ), Node::Token(Token::ASSIGN), Node::AST(AST::EXPRESSION(expr)), Node::Token(Token::SEMICOLON)] =>
+            [.., Node::Token(Token::ADDRTYPE(addr)), Node::Token(Token::VAR), Node::Token(Token::IDENTIFIER(id)), Node::Token(Token::COLON), Node::Type(typ), Node::Token(Token::ASSIGN), Node::AST(AST::EXPRESSION(expr)), Node::Token(Token::SEMICOLON)] =>
             {
-                let ident = ident.clone();
+                let id = id.clone();
+                let expr = expr.clone();
+                let typ = Some(typ.clone());
+                let addr = addr.clone();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+
+                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::DECLARE {
+                    id,
+                    expr,
+                    typ,
+                    addr,
+                }))));
+                true
+            }
+            [.., Node::Token(Token::ADDRTYPE(addr)), Node::Token(Token::VAR), Node::Token(Token::IDENTIFIER(id)), Node::Token(Token::ASSIGN), Node::AST(AST::EXPRESSION(expr)), Node::Token(Token::SEMICOLON)] =>
+            {
+                let id = id.clone();
+                let expr = expr.clone();
+                let addr = addr.clone();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+                stack.pop();
+
+                let typ = None;
+
+                stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::DECLARE {
+                    id,
+                    expr,
+                    typ,
+                    addr,
+                }))));
+                true
+            }
+
+            [.., Node::Token(Token::VAR), Node::Token(Token::IDENTIFIER(id)), Node::Token(Token::COLON), Node::Type(typ), Node::Token(Token::ASSIGN), Node::AST(AST::EXPRESSION(expr)), Node::Token(Token::SEMICOLON)] =>
+            {
+                let id = id.clone();
                 let expr = expr.clone();
                 let typ = Some(typ.clone());
                 stack.pop();
@@ -158,16 +211,19 @@ pub fn parse(code: &str) -> Rc<Instruction> {
                 stack.pop();
                 stack.pop();
 
+                let addr = AddrType::ZPG;
+
                 stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::DECLARE {
-                    ident,
+                    id,
                     expr,
                     typ,
+                    addr,
                 }))));
                 true
             }
-            [.., Node::Token(Token::VAR), Node::Token(Token::IDENTIFIER(ident)), Node::Token(Token::ASSIGN), Node::AST(AST::EXPRESSION(expr)), Node::Token(Token::SEMICOLON)] =>
+            [.., Node::Token(Token::VAR), Node::Token(Token::IDENTIFIER(id)), Node::Token(Token::ASSIGN), Node::AST(AST::EXPRESSION(expr)), Node::Token(Token::SEMICOLON)] =>
             {
-                let ident = ident.clone();
+                let id = id.clone();
                 let expr = expr.clone();
                 stack.pop();
                 stack.pop();
@@ -176,11 +232,13 @@ pub fn parse(code: &str) -> Rc<Instruction> {
                 stack.pop();
 
                 let typ = None;
+                let addr = AddrType::ZPG;
 
                 stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::DECLARE {
-                    ident,
+                    id,
                     expr,
                     typ,
+                    addr,
                 }))));
                 true
             }
@@ -194,7 +252,7 @@ pub fn parse(code: &str) -> Rc<Instruction> {
                 stack.pop();
 
                 stack.push(Node::AST(AST::INSTRUCTION(Rc::new(Instruction::ASSIGN {
-                    ident,
+                    id: ident,
                     expr,
                 }))));
                 true

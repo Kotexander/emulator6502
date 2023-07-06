@@ -7,18 +7,42 @@ use std::rc::Rc;
 use std::str::CharIndices;
 use std::str::FromStr;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddrType {
+    ABS,
+    ZPG,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Uint(NonZeroU8),
     Int(NonZeroU8),
-    Ref(Rc<Self>),
+    Ref { typ: Rc<Self>, addr: AddrType },
+}
+impl Type {
+    pub fn get_size(&self) -> NonZeroU8 {
+        match self {
+            Type::Uint(size) => *size,
+            Type::Int(size) => *size,
+            Type::Ref { typ: _, addr } => unsafe {
+                match addr {
+                    AddrType::ABS => NonZeroU8::new_unchecked(2),
+                    AddrType::ZPG => NonZeroU8::new_unchecked(1),
+                }
+            },
+        }
+    }
 }
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Uint(n) => write!(f, "u{n}"),
             Type::Int(n) => write!(f, "i{n}"),
-            Type::Ref(typ) => write!(f, "&{typ}"),
+            Type::Ref { typ, addr } => match addr {
+                AddrType::ABS => write!(f, "#{typ}"),
+                AddrType::ZPG => write!(f, "${typ}"),
+            },
+            // Type::Ref(typ) => write!(f, "&{typ}"),
         }
     }
 }
@@ -39,19 +63,14 @@ impl Display for Operator {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Addr {
-    ABS,
-    ZPG,
-}
-
 #[derive(Debug, Clone)]
 pub enum Token {
     NUMBER(usize),
     OPERATOR(Operator),
     IDENTIFIER(Rc<str>),
     TYPE(Type),
-    ADDR(Addr),
+    ADDRTYPE(AddrType),
+    POINTER(AddrType),
     VAR,
     ASSIGN,
     SEMICOLON,
@@ -76,6 +95,8 @@ fn symbol(c: char) -> Option<Token> {
         '+' => Some(Token::OPERATOR(Operator::ADD)),
         '-' => Some(Token::OPERATOR(Operator::SUB)),
         '&' => Some(Token::REFRENCE),
+        '$' => Some(Token::POINTER(AddrType::ZPG)),
+        '#' => Some(Token::POINTER(AddrType::ABS)),
         _ => None,
     }
 }
@@ -139,8 +160,8 @@ impl<'a> Iterator for Tokenizer<'a> {
 
         match usize::from_str(token) {
             Ok(num) => Some(Token::NUMBER(num)),
-            _ if token == "abs" => Some(Token::ADDR(Addr::ABS)),
-            _ if token == "zpg" => Some(Token::ADDR(Addr::ZPG)),
+            _ if token == "abs" => Some(Token::ADDRTYPE(AddrType::ABS)),
+            _ if token == "zpg" => Some(Token::ADDRTYPE(AddrType::ZPG)),
             _ if token == "var" => Some(Token::VAR),
             _ if token == "loop" => Some(Token::LOOP),
             _ => {

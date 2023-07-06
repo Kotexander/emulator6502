@@ -1,11 +1,13 @@
-var a: u4 = 1;
-var b: u4 = 0;
-var c: u4 = 0; 
+zpg var a: u4 = 1;
+zpg var b: u4 = 0;
+zpg var c: u4 = 0; 
+
+var p = &c;
 
 loop {
     c = a + b;
     a = b;
     b = c;
 
-    zp_out_u32 = &c;
+    zp_out_u32 = p;
 }

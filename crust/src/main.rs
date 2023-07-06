@@ -6,16 +6,25 @@ use std::rc::Rc;
 mod parser;
 use parser::*;
 
-enum AddrType {
+#[derive(Debug, Clone, Copy)]
+enum Addr {
     Abs(u16),
     Zp(u8),
 }
+impl Addr {
+    fn get_type(&self) -> AddrType {
+        match self {
+            Addr::Abs(_) => AddrType::ABS,
+            Addr::Zp(_) => AddrType::ZPG,
+        }
+    }
+}
 struct Var {
-    addr: AddrType,
+    addr: Addr,
     typ: Type,
 }
 
-type SymbolTable = HashMap<Rc<str>, Type>;
+type SymbolTable = HashMap<Rc<str>, (Type, AddrType)>;
 type MemTable = HashMap<Rc<str>, Var>;
 
 /// `imp_typ` is used for implied type incase type is not defined
@@ -38,30 +47,15 @@ fn analyse_expression(
                     Ok(Some(imp_typ))
                 } // set implied
             }
-            // (Some(imp_typ), Some(exp_typ)) => {
-            // if imp_typ != exp_typ {
-            // Err(format!(
-            // "Implied type ({imp_typ:?}) doesn't match Constant type ({exp_typ:?})"
-            // ))
-            // } else {
-            // Ok(Some(exp_typ))
-            // }
-            // }
         }
-        Expression::IDENTIFIER { ident } => {
-            let ident_typ = symbol_table
-                .get(ident)
+        Expression::IDENTIFIER { id } => {
+            let (id_typ, _) = symbol_table
+                .get(id)
                 // .copied()
-                .ok_or(format!("undeclared variable: {ident}"))?
+                .ok_or(format!("undeclared variable: {id}"))?
                 .clone();
 
-            Ok(Some(ident_typ))
-
-            // match (imp_typ, ident_typ) {
-            // (None, None) => Ok(None), // leave it for now
-            // (_, _) => Ok(Some(ident_typ)),
-            // (Some(_), _) => Ok(imp_typ),
-            // }
+            Ok(Some(id_typ))
         }
         Expression::BINOP { lhs, op, rhs } => {
             // get expected definate types
@@ -84,13 +78,16 @@ fn analyse_expression(
                 Err(format!("types dont match on operation: `{lhs} {op} {rhs}`"))
             }
         }
-        Expression::REFRENCE { ident } => {
-            let ident_typ = symbol_table
-                .get(ident)
-                .ok_or(format!("undeclared variable: {ident}"))?
+        Expression::REFRENCE { id } => {
+            let (id_typ, addr) = symbol_table
+                .get(id)
+                .ok_or(format!("undeclared variable: {id}"))?
                 .clone();
 
-            Ok(Some(Type::Ref(Rc::new(ident_typ))))
+            Ok(Some(Type::Ref {
+                typ: Rc::new(id_typ),
+                addr,
+            }))
         }
     }
 }
@@ -99,62 +96,55 @@ fn analyse_instruction(
     symbol_table: &mut SymbolTable,
 ) -> Result<(), String> {
     match instruction {
-        Instruction::DECLARE { ident, expr, typ } => {
-            if symbol_table.get(ident).is_some() {
-                Err(format!("variable: ({ident}) already declared"))
+        Instruction::DECLARE {
+            id,
+            expr,
+            typ,
+            addr,
+        } => {
+            if symbol_table.get(id).is_some() {
+                Err(format!("variable: ({id}) already declared"))
             } else {
                 let expr_typ = analyse_expression(expr, symbol_table, typ.clone())?;
 
                 match (typ, expr_typ) {
                     (None, None) => {
                         let typ = Type::Uint(NonZeroU8::new(1).unwrap());
-                        // *symbol_table.get_mut(ident).unwrap() = typ;
                         analyse_expression(expr, symbol_table, Some(typ.clone()))?;
-                        symbol_table.insert(ident.clone(), typ);
+                        symbol_table.insert(id.clone(), (typ, *addr));
                         Ok(())
                     }
                     (None, Some(expr_typ)) => {
-                        symbol_table.insert(ident.clone(), expr_typ);
-                        // *symbol_table.get_mut(ident).unwrap() = expr_typ;
+                        symbol_table.insert(id.clone(), (expr_typ, *addr));
                         Ok(())
                     }
                     (Some(_typ), None) => {
                         // dont know about this one
-                        Err(format!("could not determine type of variable: ({ident})"))
+                        Err(format!("could not determine type of variable: ({id})"))
                     }
                     (Some(typ), Some(expr_typ)) => {
                         if *typ != expr_typ {
-                            Err(format!("variable: ({ident}) is set of type of: `{typ}` but got type `{expr_typ}`\n`var {ident}: {typ} = {expr_typ}`"))
+                            Err(format!("variable: ({id}) is set of type of: `{typ}` but got type `{expr_typ}`\n`var {id}: {typ} = {expr_typ}`"))
                         } else {
-                            symbol_table.insert(ident.clone(), typ.clone());
+                            symbol_table.insert(id.clone(), (typ.clone(), *addr));
                             Ok(())
                         }
                     }
                 }
             }
         }
-        Instruction::ASSIGN { ident, expr } => {
-            let ident_typ = symbol_table
-                .get(ident)
-                .ok_or(format!("assignment of ({ident}) before declaration"))?
+        Instruction::ASSIGN { id, expr } => {
+            let (id_typ, addr) = symbol_table
+                .get(id)
+                .ok_or(format!("assignment of ({id}) before declaration"))?
                 .clone();
-            let expr_typ = analyse_expression(expr, symbol_table, Some(ident_typ.clone()))?;
-            match (ident_typ, expr_typ) {
-                // (None, None) => {
-                //     let typ = Some(Type::Uint(NonZeroU8::new(1).unwrap()));
-                //     *symbol_table.get_mut(ident).unwrap() = typ;
-                //     analyse_expression(expr, symbol_table, typ)?;
-                //     Ok(())
-                // }
-                // (None, Some(typ)) => {
-                // *symbol_table.get_mut(ident).unwrap() = Some(typ);
-                // Ok(())
-                // }
+            let expr_typ = analyse_expression(expr, symbol_table, Some(id_typ.clone()))?;
+            match (id_typ, expr_typ) {
                 (_, None) => Err(format!("assign expression must have a type")),
-                (ident_typ, Some(expr_typ)) => {
-                    if ident_typ != expr_typ {
+                (id_typ, Some(expr_typ)) => {
+                    if id_typ != expr_typ {
                         Err(format!(
-                            "assign expression type does not match variable's type\n`{ident}:({ident_typ}) = ({expr_typ});`"
+                            "assign expression type does not match variable's type\n`{id}:({id_typ}) = ({expr_typ});`"
                         ))
                     } else {
                         Ok(())
@@ -206,130 +196,124 @@ enum State {
     Sub,
 }
 
-fn const_anyint(ram: &mut Ram, bytes: &[u8], state: &State) {
+fn load_bytes(ram: &mut Ram, bytes: &[u8]) {
     let size = bytes.len() as u8;
-    // set carry bit (if needed)
-    match state {
-        State::Normal => {}
-        State::Add => {
-            ram.insert_u8(0x18); // CLC_IMP
-        }
-        State::Sub => {
-            ram.insert_u8(0x38); // SEC_IMP
-        }
-    }
 
-    // loop bytes
     for i in 0..size {
         // load
-        match state {
-            State::Normal => {
-                // load const byte
-                ram.insert_u8(0xA9); // LDA_IMM
-                ram.insert_u8(bytes[i as usize]);
-            }
-            _ => {
-                // load byte
-                ram.insert_u8(0xA5); // LDA_ZP0
-                ram.insert_u8(i);
-            }
-        }
-        // op
-        match state {
-            State::Normal => {}
-            State::Add => {
-                // add const byte
-                ram.insert_u8(0x69); // ADC_IMM
-                ram.insert_u8(bytes[i as usize]);
-            }
-            State::Sub => {
-                // sub const byte
-                ram.insert_u8(0xE9); // SBC_IMM
-                ram.insert_u8(bytes[i as usize]);
-            }
-        }
-        // save byte
+        ram.insert_u8(0xA9); // LDA_IMM
+        ram.insert_u8(bytes[i as usize]);
+
+        // save
         ram.insert_u8(0x85); // STA_ZP0
         ram.insert_u8(i);
     }
 }
-fn ident_anyint(ram: &mut Ram, var: &Var, state: &State) {
-    let size = match var.typ {
-        Type::Uint(size) | Type::Int(size) => size.get(),
-        Type::Ref(_) => todo!(),
-    };
-    // set carry bit (if needed)
-    match state {
-        State::Normal => {}
-        State::Add => {
-            ram.insert_u8(0x18); // CLC_IMP
-        }
-        State::Sub => {
-            ram.insert_u8(0x38); // SEC_IMP
-        }
-    }
+fn add_bytes(ram: &mut Ram, bytes: &[u8]) {
+    let size = bytes.len() as u8;
 
-    // loop bytes
+    ram.insert_u8(0x18); // CLC_IMP
     for i in 0..size {
         // load
-        match state {
-            State::Normal => {
-                // load ident byte
-                match var.addr {
-                    AddrType::Abs(p) => {
-                        let p = p + i as u16;
-                        ram.insert_u8(0xAD); // LDA_ABS
-                        ram.insert_u16(p);
-                    }
-                    AddrType::Zp(p) => {
-                        let p = p + i;
-                        ram.insert_u8(0xA5); // LDA_ZP0
-                        ram.insert_u8(p);
-                    }
-                };
+        ram.insert_u8(0xA5); // LDA_ZP0
+        ram.insert_u8(i);
+
+        // add
+        ram.insert_u8(0x69); // ADC_IMM
+        ram.insert_u8(bytes[i as usize]);
+
+        // save
+        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(i);
+    }
+}
+fn sub_bytes(ram: &mut Ram, bytes: &[u8]) {
+    let size = bytes.len() as u8;
+
+    ram.insert_u8(0x38); // SEC_IMP
+    for i in 0..size {
+        // load
+        ram.insert_u8(0xA5); // LDA_ZP0
+        ram.insert_u8(i);
+
+        // sub
+        ram.insert_u8(0xE9); // SBC_IMM
+        ram.insert_u8(bytes[i as usize]);
+
+        // save
+        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(i);
+    }
+}
+
+fn load_id(ram: &mut Ram, size: u8, addr: Addr) {
+    for i in 0..size {
+        // load
+        match addr {
+            Addr::Abs(p) => {
+                let p = p + i as u16;
+                ram.insert_u8(0xAD); // LDA_ABS
+                ram.insert_u16(p);
             }
-            _ => {
-                // load byte
+            Addr::Zp(p) => {
+                let p = p + i;
                 ram.insert_u8(0xA5); // LDA_ZP0
-                ram.insert_u8(i);
+                ram.insert_u8(p);
             }
-        }
-        // op
-        match state {
-            State::Normal => {}
-            State::Add => {
-                // add ident byte
-                match var.addr {
-                    AddrType::Abs(p) => {
-                        let p = p + i as u16;
-                        ram.insert_u8(0x6D); // ADC_ABS
-                        ram.insert_u16(p);
-                    }
-                    AddrType::Zp(p) => {
-                        let p = p + i;
-                        ram.insert_u8(0x65); // ADC_ZP0
-                        ram.insert_u8(p);
-                    }
-                }
+        };
+
+        // save
+        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(i);
+    }
+}
+fn add_id(ram: &mut Ram, size: u8, addr: Addr) {
+    ram.insert_u8(0x18); // CLC_IMP
+    for i in 0..size {
+        // load
+        ram.insert_u8(0xA5); // LDA_ZP0
+        ram.insert_u8(i);
+
+        // add
+        match addr {
+            Addr::Abs(p) => {
+                let p = p + i as u16;
+                ram.insert_u8(0x6D); // ADC_ABS
+                ram.insert_u16(p);
             }
-            State::Sub => {
-                // sub ident byte
-                match var.addr {
-                    AddrType::Abs(p) => {
-                        let p = p + i as u16;
-                        ram.insert_u8(0xED); // SBC_ABS
-                        ram.insert_u16(p);
-                    }
-                    AddrType::Zp(p) => {
-                        let p = p + i;
-                        ram.insert_u8(0xE5); // SBC_ZP0
-                        ram.insert_u8(p);
-                    }
-                }
+            Addr::Zp(p) => {
+                let p = p + i;
+                ram.insert_u8(0x65); // ADC_ZP0
+                ram.insert_u8(p);
             }
         }
 
-        // save byte
+        // save
+        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(i);
+    }
+}
+fn sub_id(ram: &mut Ram, size: u8, addr: Addr) {
+    ram.insert_u8(0x38); // SEC_IMP
+    for i in 0..size {
+        // load
+        ram.insert_u8(0xA5); // LDA_ZP0
+        ram.insert_u8(i);
+
+        match addr {
+            Addr::Abs(p) => {
+                let p = p + i as u16;
+                ram.insert_u8(0xED); // SBC_ABS
+                ram.insert_u16(p);
+            }
+            Addr::Zp(p) => {
+                let p = p + i;
+                ram.insert_u8(0xE5); // SBC_ZP0
+                ram.insert_u8(p);
+            }
+        }
+
+        // save
         ram.insert_u8(0x85); // STA_ZP0
         ram.insert_u8(i);
     }
@@ -338,23 +322,27 @@ fn ident_anyint(ram: &mut Ram, var: &Var, state: &State) {
 fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state: State) {
     match expr {
         Expression::CONSTANT { value, typ } => {
-            if let Some(typ) = typ.borrow().clone() {
-                let mut bytes = value.to_le_bytes().to_vec();
-                match typ {
-                    Type::Uint(size) | Type::Int(size) => {
-                        let size = size.get();
-                        bytes.resize(size as usize, 0);
-                        const_anyint(ram, &bytes, &state);
-                    }
-                    Type::Ref(_) => panic!("constant can't have a reference as it's type"),
-                };
-            } else {
-                panic!("error while generating code for a constant");
+            let typ = typ.borrow();
+            let typ = typ.as_ref().unwrap();
+            let size = typ.get_size().get();
+            let mut bytes = value.to_le_bytes().to_vec();
+            bytes.resize(size as usize, 0);
+
+            match state {
+                State::Normal => load_bytes(ram, &bytes),
+                State::Add => add_bytes(ram, &bytes),
+                State::Sub => sub_bytes(ram, &bytes),
             }
         }
-        Expression::IDENTIFIER { ident } => {
-            let var = &mem_table[ident];
-            ident_anyint(ram, var, &state);
+        Expression::IDENTIFIER { id } => {
+            let var = &mem_table[id];
+            let size = var.typ.get_size().get();
+            let addr = var.addr.clone();
+            match state {
+                State::Normal => load_id(ram, size, addr),
+                State::Add => add_id(ram, size, addr),
+                State::Sub => sub_id(ram, size, addr),
+            }
         }
         Expression::BINOP { lhs, op, rhs } => {
             gen_expression(lhs, ram, mem_table, state);
@@ -364,14 +352,14 @@ fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state:
             };
             gen_expression(rhs, ram, mem_table, state);
         }
-        Expression::REFRENCE { ident } => {
+        Expression::REFRENCE { id: ident } => {
             let var = mem_table.get(ident).expect(&format!(
                 "all identifiers should be defined during code generation but ({ident}) was not"
             ));
 
             let p = match var.addr {
-                AddrType::Abs(_) => todo!("haven't figured out how to check if references lengths match yet; therefore, only zero point references are supported"),
-                AddrType::Zp(p) => p,
+                Addr::Abs(_) => todo!("haven't figured out how to check if references lengths match yet; therefore, only zero point references are supported"),
+                Addr::Zp(p) => p,
             };
 
             gen_expression(
@@ -388,23 +376,24 @@ fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state:
 }
 fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTable) {
     match instruction {
-        Instruction::ASSIGN { ident, expr } | Instruction::DECLARE { ident, expr, .. } => {
+        Instruction::ASSIGN { id: ident, expr }
+        | Instruction::DECLARE {
+            id: ident, expr, ..
+        } => {
             gen_expression(expr, ram, mem_table, State::Normal);
             let var = &mem_table[ident];
-            let size = match var.typ {
-                Type::Uint(size) | Type::Int(size) => size.get(),
-                Type::Ref(_) => 2, // SUPER TEMPORARY
-            };
+            let size = var.typ.get_size().get();
+
             for i in 0..size {
                 ram.insert_u8(0xA5); // LDA_ZP0
                 ram.insert_u8(i);
                 match var.addr {
-                    AddrType::Abs(p) => {
+                    Addr::Abs(p) => {
                         let p = p + i as u16;
                         ram.insert_u8(0x8D); // STA_ABS
                         ram.insert_u16(p);
                     }
-                    AddrType::Zp(p) => {
+                    Addr::Zp(p) => {
                         let p = p + i;
                         ram.insert_u8(0x85); // STA_ZP0
                         ram.insert_u8(p);
@@ -430,73 +419,59 @@ fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTabl
 }
 
 fn compile(code: &str) -> Result<Ram, String> {
+    let mut global_vars = MemTable::new();
+    global_vars.insert(
+        Rc::from("zp_out_u32"),
+        Var {
+            addr: Addr::Abs(0x5000),
+            typ: Type::Ref {
+                typ: Rc::new(Type::Uint(NonZeroU8::new(4).unwrap())),
+                addr: AddrType::ZPG,
+            },
+        },
+    );
+
     let instruction = parse(&code);
     let mut symbol_table = SymbolTable::new();
-    // symbol_table.insert(Rc::from("out"), Type::Uint(NonZeroU8::new(1).unwrap()));
-    symbol_table.insert(
-        Rc::from("zp_out_u32"),
-        Type::Ref(Rc::new(Type::Uint(NonZeroU8::new(4).unwrap()))),
-    );
+
+    for (id, var) in &global_vars {
+        symbol_table.insert(id.clone(), (var.typ.clone(), var.addr.get_type()));
+    }
+
     analyse_instruction(&instruction, &mut symbol_table)?;
     println!("{instruction:#?}");
 
     // get max var size for working memory
-    let mut i: u8 = 0;
-    for (_ident, typ) in symbol_table.iter() {
-        match typ {
-            Type::Uint(size) | Type::Int(size) => {
-                i = i.max(size.get());
-            }
-            Type::Ref(_) => {
-                // TODO: figure out a way to not assume worst case senerio
-                i = i.max(2);
-            }
-        }
+    let mut i: u8 = 2;
+    for (_ident, (typ, _addr)) in symbol_table.iter() {
+        i = i.max(typ.get_size().get());
     }
-    println!("Working memory size: {i} bytes");
+    println!("Memory register size: {i} bytes");
 
-    let mut mem_table = HashMap::new();
+    let mut mem_table = global_vars;
+    for (id, _var) in &mem_table {
+        symbol_table.remove(id);
+    }
 
-    for (ident, typ) in symbol_table.iter() {
-        match typ {
-            Type::Uint(size) | Type::Int(size) => {
-                // let var = if &**ident == "out" {
-                // Var {
-                // addr: AddrType::Abs(0x5000),
-                // typ: typ.clone(),
-                // }
-                // } else {
-                let var = Var {
-                    addr: AddrType::Zp(i),
-                    typ: typ.clone(),
-                };
-                i += size.get();
-                // var
-                // };
-                let addr = match var.addr {
-                    AddrType::Abs(addr) => format!("{addr:#06X}"),
-                    AddrType::Zp(addr) => format!("{addr:#04X}"),
-                };
-                println!("ident: {ident}, addr: {addr}, size: {size} type: {typ}");
-                mem_table.insert(ident.clone(), var);
-            }
-            Type::Ref(_) => {
-                if &**ident == "zp_out_u32" {
-                    let var = Var {
-                        addr: AddrType::Abs(0x5000),
-                        typ: typ.clone(),
-                    };
-                    let addr = match var.addr {
-                        AddrType::Abs(addr) => format!("{addr:#06X}"),
-                        AddrType::Zp(addr) => format!("{addr:#04X}"),
-                    };
-                    println!("ident: {ident}, addr: {addr}, size: 2 type: {typ}");
-                    mem_table.insert(ident.clone(), var);
-                } else {
-                    todo!();
-                }
-            }
-        }
+    for (id, (typ, addr)) in symbol_table.iter() {
+        assert_eq!(*addr, AddrType::ZPG);
+        let size = typ.get_size();
+        let var = Var {
+            addr: Addr::Zp(i),
+            typ: typ.clone(),
+        };
+        i += size.get();
+        mem_table.insert(id.clone(), var);
+    }
+
+    for (id, var) in &mem_table {
+        let addr = match var.addr {
+            Addr::Abs(addr) => format!("{addr:#06X}"),
+            Addr::Zp(addr) => format!("{addr:#04X}"),
+        };
+        let typ = &var.typ;
+        let size = typ.get_size();
+        println!("ident: {id}, addr: {addr} type: {typ} size: {size} byte");
     }
 
     let mut ram = Ram::new();
