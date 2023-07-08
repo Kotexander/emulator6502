@@ -7,6 +7,8 @@ use std::rc::Rc;
 mod parser;
 use parser::*;
 
+use cpu::OpCode::*;
+
 #[derive(Debug, Clone, Copy)]
 enum Addr {
     Abs(u16),
@@ -215,47 +217,47 @@ fn load_bytes(ram: &mut Ram, bytes: &[u8]) {
 
     for i in 0..size {
         // load
-        ram.insert_u8(0xA9); // LDA_IMM
+        ram.insert_u8(LDA_IMM as u8);
         ram.insert_u8(bytes[i as usize]);
 
         // save
-        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(STA_ZPG as u8);
         ram.insert_u8(i);
     }
 }
 fn add_bytes(ram: &mut Ram, bytes: &[u8]) {
     let size = bytes.len() as u8;
 
-    ram.insert_u8(0x18); // CLC_IMP
+    ram.insert_u8(CLC_IMP as u8);
     for i in 0..size {
         // load
-        ram.insert_u8(0xA5); // LDA_ZP0
+        ram.insert_u8(LDA_ZPG as u8);
         ram.insert_u8(i);
 
         // add
-        ram.insert_u8(0x69); // ADC_IMM
+        ram.insert_u8(ADC_IMM as u8);
         ram.insert_u8(bytes[i as usize]);
 
         // save
-        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(STA_ZPG as u8);
         ram.insert_u8(i);
     }
 }
 fn sub_bytes(ram: &mut Ram, bytes: &[u8]) {
     let size = bytes.len() as u8;
 
-    ram.insert_u8(0x38); // SEC_IMP
+    ram.insert_u8(SEC_IMP as u8);
     for i in 0..size {
         // load
-        ram.insert_u8(0xA5); // LDA_ZP0
+        ram.insert_u8(LDA_ZPG as u8);
         ram.insert_u8(i);
 
         // sub
-        ram.insert_u8(0xE9); // SBC_IMM
+        ram.insert_u8(SBC_IMM as u8);
         ram.insert_u8(bytes[i as usize]);
 
         // save
-        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(STA_ZPG as u8);
         ram.insert_u8(i);
     }
 }
@@ -266,69 +268,69 @@ fn load_id(ram: &mut Ram, size: u8, addr: Addr) {
         match addr {
             Addr::Abs(p) => {
                 let p = p + i as u16;
-                ram.insert_u8(0xAD); // LDA_ABS
+                ram.insert_u8(LDA_ABS as u8);
                 ram.insert_u16(p);
             }
             Addr::Zp(p) => {
                 let p = p + i;
-                ram.insert_u8(0xA5); // LDA_ZP0
+                ram.insert_u8(LDA_ZPG as u8);
                 ram.insert_u8(p);
             }
         };
 
         // save
-        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(STA_ZPG as u8);
         ram.insert_u8(i);
     }
 }
 fn add_id(ram: &mut Ram, size: u8, addr: Addr) {
-    ram.insert_u8(0x18); // CLC_IMP
+    ram.insert_u8(CLC_IMP as u8);
     for i in 0..size {
         // load
-        ram.insert_u8(0xA5); // LDA_ZP0
+        ram.insert_u8(LDA_ZPG as u8);
         ram.insert_u8(i);
 
         // add
         match addr {
             Addr::Abs(p) => {
                 let p = p + i as u16;
-                ram.insert_u8(0x6D); // ADC_ABS
+                ram.insert_u8(ADC_ABS as u8);
                 ram.insert_u16(p);
             }
             Addr::Zp(p) => {
                 let p = p + i;
-                ram.insert_u8(0x65); // ADC_ZP0
+                ram.insert_u8(ADC_ZPG as u8);
                 ram.insert_u8(p);
             }
         }
 
         // save
-        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(STA_ZPG as u8);
         ram.insert_u8(i);
     }
 }
 fn sub_id(ram: &mut Ram, size: u8, addr: Addr) {
-    ram.insert_u8(0x38); // SEC_IMP
+    ram.insert_u8(SEC_IMP as u8);
     for i in 0..size {
         // load
-        ram.insert_u8(0xA5); // LDA_ZP0
+        ram.insert_u8(LDA_ZPG as u8);
         ram.insert_u8(i);
 
         match addr {
             Addr::Abs(p) => {
                 let p = p + i as u16;
-                ram.insert_u8(0xED); // SBC_ABS
+                ram.insert_u8(SBC_ABS as u8);
                 ram.insert_u16(p);
             }
             Addr::Zp(p) => {
                 let p = p + i;
-                ram.insert_u8(0xE5); // SBC_ZP0
+                ram.insert_u8(SBC_ZPG as u8);
                 ram.insert_u8(p);
             }
         }
 
         // save
-        ram.insert_u8(0x85); // STA_ZP0
+        ram.insert_u8(STA_ZPG as u8);
         ram.insert_u8(i);
     }
 }

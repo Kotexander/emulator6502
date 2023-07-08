@@ -60,182 +60,6 @@ impl From<u8> for StatusRegister {
     }
 }
 
-mod opcodes {
-    #![allow(non_camel_case_types)]
-
-    #[repr(u8)]
-    #[derive(Debug, macros::FromHexCode)]
-    pub enum Instruction {
-        BRK_IMP = 0x00,
-        ORA_IZX = 0x01,
-        ORA_ZP0 = 0x05,
-        ASL_ZP0 = 0x06,
-        PHP_IMP = 0x07,
-        ORA_IMM = 0x09,
-        ASL_ACC = 0x0A,
-        ORA_ABS = 0x0D,
-        ASL_ABS = 0x0E,
-
-        BPL_REL = 0x10,
-        ORA_IZY = 0x11,
-        ORA_ZPX = 0x15,
-        ASL_ZPX = 0x16,
-        CLC_IMP = 0x18,
-        ORA_ABY = 0x19,
-        ORA_ABX = 0x1D,
-        ASL_ABX = 0x1E,
-
-        JSR_ABS = 0x20,
-        AND_IZX = 0x21,
-        BIT_ZP0 = 0x24,
-        AND_ZP0 = 0x25,
-        ROL_ZP0 = 0x26,
-        PLP_IMP = 0x28,
-        AND_IMM = 0x29,
-        ROL_ACC = 0x2A,
-        BIT_ABS = 0x2C,
-        AND_ABS = 0x2D,
-        ROL_ABS = 0x2E,
-
-        BMI_REL = 0x30,
-        AND_IZY = 0x31,
-        AND_ZPX = 0x35,
-        ROL_ZPX = 0x36,
-        SEC_IMP = 0x38,
-        AND_ABY = 0x39,
-        AND_ABX = 0x3D,
-        ROL_ABX = 0x3E,
-
-        RTI_IMP = 0x40,
-        EOR_IZX = 0x41,
-        EOR_ZP0 = 0x45,
-        LSR_ZP0 = 0x46,
-        PHA_IMP = 0x48,
-        EOR_IMM = 0x49,
-        LSR_ACC = 0x4A,
-        JMP_ABS = 0x4C,
-        EOR_ABS = 0x4D,
-        LSR_ABS = 0x4E,
-
-        BVC_REL = 0x50,
-        EOR_IZY = 0x51,
-        EOR_ZPX = 0x55,
-        LSR_ZPX = 0x56,
-        CLI_IMP = 0x58,
-        EOR_ABY = 0x59,
-        EOR_ABX = 0x5D,
-        LSR_ABX = 0x5E,
-
-        RTS_IMP = 0x60,
-        ADC_IZX = 0x61,
-        ADC_ZP0 = 0x65,
-        ROR_ZP0 = 0x66,
-        PLA_IMP = 0x68,
-        ADC_IMM = 0x69,
-        ROR_ACC = 0x6A,
-        JMP_IND = 0x6C,
-        ADC_ABS = 0x6D,
-        ROR_ABS = 0x6E,
-
-        BVS_REL = 0x70,
-        ADC_IZY = 0x71,
-        ADC_ZPX = 0x75,
-        ROR_ZPX = 0x76,
-        SEI_IMP = 0x78,
-        ADC_ABY = 0x79,
-        ADC_ABX = 0x7D,
-        ROR_ABX = 0x7E,
-
-        STA_IZX = 0x81,
-        STY_ZP0 = 0x84,
-        STA_ZP0 = 0x85,
-        STX_ZP0 = 0x86,
-        DEY_IMP = 0x88,
-        TXA_IMP = 0x8A,
-        STY_ABS = 0x8C,
-        STA_ABS = 0x8D,
-        STX_ABS = 0x8E,
-
-        BCC_REL = 0x90,
-        STA_IZY = 0x91,
-        STY_ZPX = 0x94,
-        STA_ZPX = 0x95,
-        STX_ZPY = 0x96,
-        TYA_IMP = 0x98,
-        STA_ABY = 0x99,
-        TXS_IMP = 0x9A,
-        STA_ABX = 0x9D,
-
-        LDY_IMM = 0xA0,
-        LDA_IZX = 0xA1,
-        LDX_IMM = 0xA2,
-        LDY_ZP0 = 0xA4,
-        LDA_ZP0 = 0xA5,
-        LDX_ZP0 = 0xA6,
-        TAY_IMP = 0xA8,
-        LDA_IMM = 0xA9,
-        TAX_IMP = 0xAA,
-        LDY_ABS = 0xAC,
-        LDA_ABS = 0xAD,
-        LDX_ABS = 0xAE,
-
-        BCS_REL = 0xB0,
-        LDA_IZY = 0xB1,
-        LDY_ZPX = 0xB4,
-        LDA_ZPX = 0xB5,
-        LDX_ZPY = 0xB6,
-        CLV_IMP = 0xB8,
-        LDA_ABY = 0xB9,
-        TSX_IMP = 0xBA,
-        LDY_ABX = 0xBC,
-        LDA_ABX = 0xBD,
-        LDX_ABY = 0xBE,
-
-        CPY_IMM = 0xC0,
-        CMP_IZX = 0xC1,
-        CPY_ZP0 = 0xC4,
-        CMP_ZP0 = 0xC5,
-        DEC_ZP0 = 0xC6,
-        INY_IMP = 0xC8,
-        CMP_IMM = 0xC9,
-        DEX_IMP = 0xCA,
-        CPY_ABS = 0xCC,
-        CMP_ABS = 0xCD,
-        DEC_ABS = 0xCE,
-
-        BNE_REL = 0xD0,
-        CMP_IZY = 0xD1,
-        CMP_ZPX = 0xD5,
-        DEC_ZPX = 0xD6,
-        CLD_IMP = 0xD8,
-        CMP_ABY = 0xD9,
-        CMP_ABX = 0xDD,
-        DEC_ABX = 0xDE,
-
-        CPX_IMM = 0xE0,
-        SBC_IZX = 0xE1,
-        CPX_ZP0 = 0xE4,
-        SBC_ZP0 = 0xE5,
-        INC_ZP0 = 0xE6,
-        INX_IMP = 0xE8,
-        SBC_IMM = 0xE9,
-        NOP_IMP = 0xEA,
-        CPX_ABS = 0xEC,
-        SBC_ABS = 0xED,
-        INC_ABS = 0xEE,
-
-        BEQ_REL = 0xF0,
-        SBC_IZY = 0xF1,
-        SBC_ZPX = 0xF5,
-        INC_ZPX = 0xF6,
-        SED_IMP = 0xF8,
-        SBC_ABY = 0xF9,
-        SBC_ABX = 0xFD,
-        INC_ABX = 0xFE,
-    }
-}
-pub use opcodes::*;
-
 pub struct CPU6502 {
     a: u8,
     x: u8,
@@ -568,11 +392,11 @@ impl CPU6502 {
                     self.ora(num);
                 }
                 ORA_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.ora(num);
                 }
                 ASL_ZP0 => {
-                    let addr = self.zp0_addrmode(bus);
+                    let addr = self.zpg_addrmode(bus);
                     self.asl_mem(addr, bus);
                 }
                 PHP_IMP => {
@@ -633,15 +457,15 @@ impl CPU6502 {
                     self.and(num);
                 }
                 BIT_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.bit(num);
                 }
                 AND_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.and(num);
                 }
                 ROL_ZP0 => {
-                    let addr = self.zp0_addrmode(bus);
+                    let addr = self.zpg_addrmode(bus);
                     self.rol_mem(addr, bus);
                 }
                 PLP_IMP => {
@@ -703,11 +527,11 @@ impl CPU6502 {
                     self.eor(num);
                 }
                 EOR_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.eor(num);
                 }
                 LSR_ZP0 => {
-                    let addr = self.zp0_addrmode(bus);
+                    let addr = self.zpg_addrmode(bus);
                     self.lsr_mem(addr, bus);
                 }
                 PHA_IMP => {
@@ -771,11 +595,11 @@ impl CPU6502 {
                     self.adc(num);
                 }
                 ADC_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.adc(num);
                 }
                 ROR_ZP0 => {
-                    let addr = self.zp0_addrmode(bus);
+                    let addr = self.zpg_addrmode(bus);
                     self.ror_mem(addr, bus);
                 }
                 PLA_IMP => {
@@ -836,15 +660,15 @@ impl CPU6502 {
                     self.sta(addr, bus);
                 }
                 STY_ZP0 => {
-                    let addr = self.zp0_addrmode(bus);
+                    let addr = self.zpg_addrmode(bus);
                     self.sty(addr, bus);
                 }
                 STA_ZP0 => {
-                    let addr = self.zp0_addrmode(bus);
+                    let addr = self.zpg_addrmode(bus);
                     self.sta(addr, bus);
                 }
                 STX_ZP0 => {
-                    let addr = self.zp0_addrmode(bus);
+                    let addr = self.zpg_addrmode(bus);
                     self.stx(addr, bus);
                 }
                 DEY_IMP => {
@@ -912,15 +736,15 @@ impl CPU6502 {
                     self.ldx(num);
                 }
                 LDY_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.ldy(num);
                 }
                 LDA_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.lda(num);
                 }
                 LDX_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.ldx(num);
                 }
                 TAY_IMP => {
@@ -996,15 +820,15 @@ impl CPU6502 {
                     self.cmp(num);
                 }
                 CPY_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.cpy(num);
                 }
                 CMP_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.cmp(num);
                 }
                 DEC_ZP0 => {
-                    let addr = self.zp0_addrmode(bus);
+                    let addr = self.zpg_addrmode(bus);
                     self.dec_mem(addr, bus);
                 }
                 INY_IMP => {
@@ -1069,15 +893,15 @@ impl CPU6502 {
                     self.sbc(num);
                 }
                 CPX_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.cpx(num);
                 }
                 SBC_ZP0 => {
-                    let num = self.zp0_read_u8(bus);
+                    let num = self.zpg_read_u8(bus);
                     self.sbc(num);
                 }
                 INC_ZP0 => {
-                    let addr = self.zp0_addrmode(bus);
+                    let addr = self.zpg_addrmode(bus);
                     self.inc_mem(addr, bus);
                 }
                 INX_IMP => {
@@ -1159,7 +983,7 @@ impl CPU6502 {
     fn aby_addrmode(&mut self, bus: &Bus) -> u16 {
         self.fetch_u16(bus) + self.y as u16
     }
-    fn zp0_addrmode(&mut self, bus: &Bus) -> u16 {
+    fn zpg_addrmode(&mut self, bus: &Bus) -> u16 {
         u16::from_le_bytes([self.fetch_u8(bus), 0x00])
     }
     fn zpx_addrmode(&mut self, bus: &Bus) -> u16 {
@@ -1173,7 +997,7 @@ impl CPU6502 {
         bus.read_u16(ptr)
     }
     fn izy_addrmode(&mut self, bus: &Bus) -> u16 {
-        let ptr = self.zp0_addrmode(bus) + self.y as u16;
+        let ptr = self.zpg_addrmode(bus) + self.y as u16;
         bus.read_u16(ptr)
     }
     fn ind_addrmode(&mut self, bus: &Bus) -> u16 {
@@ -1197,8 +1021,8 @@ impl CPU6502 {
         let addr = self.aby_addrmode(bus);
         bus.read_u8(addr)
     }
-    fn zp0_read_u8(&mut self, bus: &Bus) -> u8 {
-        let addr = self.zp0_addrmode(bus);
+    fn zpg_read_u8(&mut self, bus: &Bus) -> u8 {
+        let addr = self.zpg_addrmode(bus);
         bus.read_u8(addr)
     }
     fn zpx_read_u8(&mut self, bus: &Bus) -> u8 {

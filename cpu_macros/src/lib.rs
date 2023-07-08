@@ -11,20 +11,20 @@ pub fn derive_from_hex_code(input: proc_macro::TokenStream) -> proc_macro::Token
         let tokens = data.variants.into_iter().map(|variant| {
             let name = variant.ident;
             let value = variant.discriminant.unwrap().1;
-            quote! {#value => #name,}
+            quote! {#value => Ok(#name),}
         });
         let expanded = quote! {
-            impl #name {
-                pub fn from_u8(opcode: u8) -> Option<Self> {
+            impl TryFrom<u8> for #name {
+                type Error = ();
+                fn try_from(value: u8) -> Result<Self, Self::Error> {
                     use #name::*;
-                    Some(match opcode {
+                    match value {
                         #(#tokens)*
-                        _ => {return None;}
-                    })
+                        _ => {Err(())}
+                    }
                 }
             }
         };
-        // panic!("{:?}", expanded.to_string());
         TokenStream::from(expanded)
     } else {
         panic!("must be enum");
