@@ -14,6 +14,6 @@ fn main() {
     loop {
         // println!("{cpu}");
         cpu.execute(&mut bus);
-        std::thread::sleep_ms(10);
+        std::thread::sleep_ms(1);
     }
 }

@@ -2,7 +2,8 @@ zpg var a: u4 = 1;
 zpg var b: u4 = 0;
 zpg var c: u4 = 0; 
 
-var p = &c;
+abs var p: $u4 = &c;
+abs var p2 = &p;
 
 loop {
     c = a + b;

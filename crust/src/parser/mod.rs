@@ -14,7 +14,10 @@ pub enum Expression {
     IDENTIFIER {
         id: Rc<str>,
     },
-    REFRENCE {
+    REFERENCE {
+        id: Rc<str>,
+    },
+    DEREFERENCE {
         id: Rc<str>,
     },
     BINOP {
@@ -106,13 +109,23 @@ pub fn parse(code: &str) -> Rc<Instruction> {
                 stack.push(Node::Type(typ));
                 true
             }
-            [.., Node::Token(Token::REFRENCE), Node::Token(Token::IDENTIFIER(id))] => {
+            [.., Node::Token(Token::REFERENCE), Node::Token(Token::IDENTIFIER(id))] => {
                 let id = id.clone();
                 stack.pop();
                 stack.pop();
-                stack.push(Node::AST(AST::EXPRESSION(Rc::new(Expression::REFRENCE {
+                stack.push(Node::AST(AST::EXPRESSION(Rc::new(Expression::REFERENCE {
                     id,
                 }))));
+                true
+            }
+            [.., Node::Token(Token::DEREFERENCE), Node::Token(Token::IDENTIFIER(id))] => {
+                let id = id.clone();
+                // let deref = deref.clone();
+                stack.pop();
+                stack.pop();
+                stack.push(Node::AST(AST::EXPRESSION(Rc::new(
+                    Expression::DEREFERENCE { id },
+                ))));
                 true
             }
             [.., Node::Token(Token::IDENTIFIER(id))] => {

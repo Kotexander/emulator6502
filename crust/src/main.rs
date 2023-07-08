@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::num::NonZeroU8;
+use std::ops::Deref;
 use std::rc::Rc;
 
 mod parser;
@@ -78,7 +79,7 @@ fn analyse_expression(
                 Err(format!("types dont match on operation: `{lhs} {op} {rhs}`"))
             }
         }
-        Expression::REFRENCE { id } => {
+        Expression::REFERENCE { id } => {
             let (id_typ, addr) = symbol_table
                 .get(id)
                 .ok_or(format!("undeclared variable: {id}"))?
@@ -88,6 +89,18 @@ fn analyse_expression(
                 typ: Rc::new(id_typ),
                 addr,
             }))
+        }
+        Expression::DEREFERENCE { id } => {
+            let (id_typ, _addr) = symbol_table
+                .get(id)
+                .ok_or(format!("undeclared variable: {id}"))?
+                .clone();
+            let id_typ = match id_typ {
+                Type::Ref { typ, addr: _ } => Ok(typ),
+                _ => Err("can't dereference {id}: ({id_typ})"),
+            }?;
+            // let id_typ: &Type = &id_typ;
+            Ok(Some(id_typ.deref().clone()))
         }
     }
 }
@@ -124,7 +137,7 @@ fn analyse_instruction(
                     }
                     (Some(typ), Some(expr_typ)) => {
                         if *typ != expr_typ {
-                            Err(format!("variable: ({id}) is set of type of: `{typ}` but got type `{expr_typ}`\n`var {id}: {typ} = {expr_typ}`"))
+                            Err(format!("variable: ({id}) is set of type of: `{typ}` but got type `{expr_typ}`\n`var {id}: ({typ}) = ({expr_typ})`"))
                         } else {
                             symbol_table.insert(id.clone(), (typ.clone(), *addr));
                             Ok(())
@@ -171,11 +184,12 @@ struct Ram {
     ptr: usize,
 }
 impl Ram {
-    fn new() -> Self {
+    fn new(start: u16) -> Self {
         let mut data = [0u8; 64 * 1024];
-        data[0xFFFC] = 0x00;
-        data[0xFFFD] = 0x01;
-        let ptr = 0x0100;
+        let start_bytes = start.to_le_bytes();
+        data[0xFFFC] = start_bytes[0];
+        data[0xFFFD] = start_bytes[1];
+        let ptr = start as usize;
         Self { data, ptr }
     }
     fn insert_u8(&mut self, data: u8) {
@@ -352,25 +366,32 @@ fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state:
             };
             gen_expression(rhs, ram, mem_table, state);
         }
-        Expression::REFRENCE { id: ident } => {
-            let var = mem_table.get(ident).expect(&format!(
-                "all identifiers should be defined during code generation but ({ident}) was not"
-            ));
+        Expression::REFERENCE { id } => {
+            let var = &mem_table[id];
 
-            let p = match var.addr {
-                Addr::Abs(_) => todo!("haven't figured out how to check if references lengths match yet; therefore, only zero point references are supported"),
-                Addr::Zp(p) => p,
-            };
-
-            gen_expression(
-                &Expression::CONSTANT {
+            let expr = match var.addr {
+                Addr::Abs(p) => Expression::CONSTANT {
+                    value: p as usize,
+                    typ: RefCell::new(Some(Type::Uint(NonZeroU8::new(2).unwrap()))),
+                },
+                Addr::Zp(p) => Expression::CONSTANT {
                     value: p as usize,
                     typ: RefCell::new(Some(Type::Uint(NonZeroU8::new(1).unwrap()))),
                 },
-                ram,
-                mem_table,
-                state,
-            );
+            };
+
+            gen_expression(&expr, ram, mem_table, state);
+        }
+        Expression::DEREFERENCE { id } => {
+            todo!();
+            // let var = &mem_table[id];
+            // ram.insert_u8(0xA2); // LDX_IMM
+            // ram.insert_u8(0);
+            // match state {
+            // State::Normal => arr_load(ram, size, addr),
+            // State::Add => todo!(),
+            // State::Sub => todo!(),
+            // }
         }
     }
 }
@@ -442,25 +463,40 @@ fn compile(code: &str) -> Result<Ram, String> {
     println!("{instruction:#?}");
 
     // get max var size for working memory
-    let mut i: u8 = 2;
+    let mut zp_ptr: u8 = 2;
     for (_ident, (typ, _addr)) in symbol_table.iter() {
-        i = i.max(typ.get_size().get());
+        zp_ptr = zp_ptr.max(typ.get_size().get());
     }
-    println!("Memory register size: {i} bytes");
+    println!("Memory register size: {zp_ptr} bytes");
 
+    let mut start = 0x0100;
     let mut mem_table = global_vars;
     for (id, _var) in &mem_table {
         symbol_table.remove(id);
     }
 
     for (id, (typ, addr)) in symbol_table.iter() {
-        assert_eq!(*addr, AddrType::ZPG);
-        let size = typ.get_size();
-        let var = Var {
-            addr: Addr::Zp(i),
-            typ: typ.clone(),
+        // assert_eq!(*addr, AddrType::ZPG);
+        let var = match addr {
+            AddrType::ABS => {
+                let size = typ.get_size().get();
+                let var = Var {
+                    addr: Addr::Abs(start),
+                    typ: typ.clone(),
+                };
+                start += size as u16;
+                var
+            }
+            AddrType::ZPG => {
+                let size = typ.get_size().get();
+                let var = Var {
+                    addr: Addr::Zp(zp_ptr),
+                    typ: typ.clone(),
+                };
+                zp_ptr += size;
+                var
+            }
         };
-        i += size.get();
         mem_table.insert(id.clone(), var);
     }
 
@@ -474,7 +510,7 @@ fn compile(code: &str) -> Result<Ram, String> {
         println!("ident: {id}, addr: {addr} type: {typ} size: {size} byte");
     }
 
-    let mut ram = Ram::new();
+    let mut ram = Ram::new(start);
 
     gen_instruction(&instruction, &mut ram, &mem_table);
 

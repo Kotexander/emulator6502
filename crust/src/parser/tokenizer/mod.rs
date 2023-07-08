@@ -80,7 +80,8 @@ pub enum Token {
     LOOP,
     BOPEN,
     BCLOSE,
-    REFRENCE,
+    REFERENCE,
+    DEREFERENCE,
 }
 
 fn symbol(c: char) -> Option<Token> {
@@ -94,7 +95,8 @@ fn symbol(c: char) -> Option<Token> {
         '=' => Some(Token::ASSIGN),
         '+' => Some(Token::OPERATOR(Operator::ADD)),
         '-' => Some(Token::OPERATOR(Operator::SUB)),
-        '&' => Some(Token::REFRENCE),
+        '&' => Some(Token::REFERENCE),
+        '*' => Some(Token::DEREFERENCE),
         '$' => Some(Token::POINTER(AddrType::ZPG)),
         '#' => Some(Token::POINTER(AddrType::ABS)),
         _ => None,
