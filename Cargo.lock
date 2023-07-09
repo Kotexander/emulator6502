@@ -17,6 +17,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "emmulator"
+version = "0.1.0"
+dependencies = [
+ "cpu",
+]
+
+[[package]]
 name = "macros"
 version = "0.1.0"
 dependencies = [

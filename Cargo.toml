@@ -3,4 +3,5 @@ members = [
     "crust",
     "cpu",
     "cpu_macros",
+    "emmulator",
 ]

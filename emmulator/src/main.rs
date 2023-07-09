@@ -1,4 +1,4 @@
-use emulator6502::*;
+use emmulator::*;
 
 fn main() {
     let file = std::env::args().nth(1).expect("No file given");

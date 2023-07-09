@@ -381,8 +381,8 @@ impl CPU6502 {
     }
 
     pub fn execute(&mut self, bus: &mut Bus) {
-        use Instruction::*;
-        if let Some(op_code) = Instruction::from_u8(self.fetch_u8(bus)) {
+        use cpu::OpCode::*;
+        if let Ok(op_code) = cpu::OpCode::try_from(self.fetch_u8(bus)) {
             match op_code {
                 BRK_IMP => {
                     panic!("BRK");
@@ -391,11 +391,11 @@ impl CPU6502 {
                     let num = self.izx_read_u8(bus);
                     self.ora(num);
                 }
-                ORA_ZP0 => {
+                ORA_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.ora(num);
                 }
-                ASL_ZP0 => {
+                ASL_ZPG => {
                     let addr = self.zpg_addrmode(bus);
                     self.asl_mem(addr, bus);
                 }
@@ -456,15 +456,15 @@ impl CPU6502 {
                     let num = self.izx_read_u8(bus);
                     self.and(num);
                 }
-                BIT_ZP0 => {
+                BIT_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.bit(num);
                 }
-                AND_ZP0 => {
+                AND_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.and(num);
                 }
-                ROL_ZP0 => {
+                ROL_ZPG => {
                     let addr = self.zpg_addrmode(bus);
                     self.rol_mem(addr, bus);
                 }
@@ -526,11 +526,11 @@ impl CPU6502 {
                     let num = self.izx_read_u8(bus);
                     self.eor(num);
                 }
-                EOR_ZP0 => {
+                EOR_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.eor(num);
                 }
-                LSR_ZP0 => {
+                LSR_ZPG => {
                     let addr = self.zpg_addrmode(bus);
                     self.lsr_mem(addr, bus);
                 }
@@ -594,11 +594,11 @@ impl CPU6502 {
                     let num = self.izx_read_u8(bus);
                     self.adc(num);
                 }
-                ADC_ZP0 => {
+                ADC_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.adc(num);
                 }
-                ROR_ZP0 => {
+                ROR_ZPG => {
                     let addr = self.zpg_addrmode(bus);
                     self.ror_mem(addr, bus);
                 }
@@ -659,15 +659,15 @@ impl CPU6502 {
                     let addr = self.izx_addrmode(bus);
                     self.sta(addr, bus);
                 }
-                STY_ZP0 => {
+                STY_ZPG => {
                     let addr = self.zpg_addrmode(bus);
                     self.sty(addr, bus);
                 }
-                STA_ZP0 => {
+                STA_ZPG => {
                     let addr = self.zpg_addrmode(bus);
                     self.sta(addr, bus);
                 }
-                STX_ZP0 => {
+                STX_ZPG => {
                     let addr = self.zpg_addrmode(bus);
                     self.stx(addr, bus);
                 }
@@ -735,15 +735,15 @@ impl CPU6502 {
                     let num = self.fetch_u8(bus);
                     self.ldx(num);
                 }
-                LDY_ZP0 => {
+                LDY_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.ldy(num);
                 }
-                LDA_ZP0 => {
+                LDA_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.lda(num);
                 }
-                LDX_ZP0 => {
+                LDX_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.ldx(num);
                 }
@@ -819,15 +819,15 @@ impl CPU6502 {
                     let num = self.izx_read_u8(bus);
                     self.cmp(num);
                 }
-                CPY_ZP0 => {
+                CPY_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.cpy(num);
                 }
-                CMP_ZP0 => {
+                CMP_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.cmp(num);
                 }
-                DEC_ZP0 => {
+                DEC_ZPG => {
                     let addr = self.zpg_addrmode(bus);
                     self.dec_mem(addr, bus);
                 }
@@ -892,15 +892,15 @@ impl CPU6502 {
                     let num = self.izx_read_u8(bus);
                     self.sbc(num);
                 }
-                CPX_ZP0 => {
+                CPX_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.cpx(num);
                 }
-                SBC_ZP0 => {
+                SBC_ZPG => {
                     let num = self.zpg_read_u8(bus);
                     self.sbc(num);
                 }
-                INC_ZP0 => {
+                INC_ZPG => {
                     let addr = self.zpg_addrmode(bus);
                     self.inc_mem(addr, bus);
                 }
@@ -959,7 +959,7 @@ impl CPU6502 {
                 }
             }
         } else {
-            panic!("BAD OPCODE {:#06X}", self.pc);
+            panic!("ILLEGAL OPCODE {:#06X}", self.pc);
         }
     }
 
