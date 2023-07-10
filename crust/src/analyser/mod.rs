@@ -1,9 +1,8 @@
 mod parser;
-use std::{collections::HashMap, num::NonZeroU8, rc::Rc};
+use std::{collections::HashMap, num::NonZeroU8, ops::Deref, rc::Rc};
 
 pub use parser::*;
 
-// pub type SymbolTable = HashMap<Rc<str>, (Type, AddrMode)>;
 #[derive(Debug, Clone)]
 pub struct Symbol {
     pub typ: Type,
@@ -72,7 +71,25 @@ pub fn analyse_expression(
             // its fine of both sides are none
             if lhs_typ2 == rhs_typ2 {
                 // Ok(Some(lhs_typ2))
-                Ok(lhs_typ2)
+                match lhs_typ2 {
+                    Some(lhs_typ) => match lhs_typ {
+                        Type::Uint(_) | Type::Int(_) => match op {
+                            Operator::ADD | Operator::SUB => Ok(rhs_typ2),
+                            _ => Err(format!("{op} is not supported for integers")),
+                        },
+                        Type::Bool => match op {
+                            Operator::GREATERTHEN
+                            | Operator::LESSTHEN
+                            | Operator::OR
+                            | Operator::AND => Ok(rhs_typ2),
+                            _ => Err(format!("{op} is not supported for booleans")),
+                        },
+                        Type::Ref { .. } => {
+                            Err(String::from("no operations are allowed for references"))
+                        }
+                    },
+                    None => Ok(rhs_typ2),
+                }
             } else {
                 let lhs = lhs_typ2.map_or(String::from("(Unknown)"), |v| format!("{v}"));
                 let rhs = rhs_typ2.map_or(String::from("(Unknown)"), |v| format!("{v}"));
@@ -86,18 +103,21 @@ pub fn analyse_expression(
                 typ: Rc::new(symbol.typ),
                 addr: symbol.addr_mode,
             }))
-        } // Expression::DEREFERENCE { id } => {
-          //     let (id_typ, _addr) = symbol_table
-          //         .get(id)
-          //         .ok_or(format!("undeclared variable: {id}"))?
-          //         .clone();
-          //     let id_typ = match id_typ {
-          //         Type::Ref { typ, addr: _ } => Ok(typ),
-          //         _ => Err("can't dereference {id}: ({id_typ})"),
-          //     }?;
-          //     // let id_typ: &Type = &id_typ;
-          //     Ok(Some(id_typ.deref().clone()))
-          // }
+        }
+        Expression::DEREFERENCE { id } => {
+            // let typ = analyse_expression(expr, symbol_table, imp_typ)?.ok_or(String::from("can't dereference an unkown type"))?;
+            let id = symbol_table.get(id)?;
+            if let Type::Ref { typ, addr: _ } = &id.typ {
+                Ok(Some(typ.deref().clone()))
+            } else {
+                Err(format!("type needs to be a reference"))
+            }
+        }
+        Expression::BOOL { value: _ } => Ok(Some(Type::Bool)),
+        // Expression::DEREFERENCE { expr } => (
+        //     // let typfds = analyse_expression(expr, symbol_table, imp_typ)?;//.ok_or(String::from("can't dereference an unkown type"))?;
+        //     todo!();
+        // ),
     }
 }
 pub fn analyse_instruction(
@@ -172,6 +192,17 @@ pub fn analyse_instruction(
                 analyse_instruction(instructions, symbol_table)
             } else {
                 Ok(())
+            }
+        }
+        Instruction::IF { condition, block } => {
+            let condition_typ = analyse_expression(condition, symbol_table, Some(Type::Bool))?
+                .ok_or(String::from("if condition needs a type"))?;
+            if let Type::Bool = condition_typ {
+                Ok(())
+            } else {
+                Err(format!(
+                    "condition needs to be a boolean but got {condition_typ}"
+                ))
             }
         }
         Instruction::BIN { lhs, rhs } => {

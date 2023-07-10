@@ -18,15 +18,18 @@ pub enum Expression {
         typ: RefCell<Option<Type>>,
         // typ: Option<Type>,
     },
+    BOOL {
+        value: bool,
+    },
     IDENTIFIER {
         id: Rc<str>,
     },
     REFERENCE {
         id: Rc<str>,
     },
-    // DEREFERENCE {
-    // id: Rc<str>,
-    // },
+    DEREFERENCE {
+        id: Rc<str>,
+    },
     BINOP {
         lhs: Rc<Self>,
         op: Operator,
@@ -46,6 +49,10 @@ pub enum Instruction {
         addr_mode: AddrMode,
     },
     LOOP {
+        block: Option<Rc<Self>>,
+    },
+    IF {
+        condition: Expression,
         block: Option<Rc<Self>>,
     },
     BIN {
@@ -104,6 +111,16 @@ pub fn parse(code: &str) -> Instruction {
 
                     true
                 }
+                [.., Node::Token(Token::BOOL(n))] => {
+                    let n = *n;
+
+                    stack.pop();
+
+                    let expr = Expression::BOOL { value: n };
+                    stack.push(Node::AST(AST::EXPRESSION(expr)));
+
+                    true
+                }
                 // token type -> ast type
                 [.., Node::Token(Token::TYPE(typ))] => {
                     let typ = typ.clone();
@@ -140,17 +157,15 @@ pub fn parse(code: &str) -> Instruction {
                     true
                 }
                 // // dereference
-                // [.., Node::Token(Token::DEREFERENCE), Node::Token(Token::IDENTIFIER(id))] => {
-                //     let id = id.clone();
+                [.., Node::Token(Token::DEREFERENCE), Node::Token(Token::IDENTIFIER(id))] => {
+                    let id = id.clone();
 
-                //     stack.truncate(stack_len - 2);
+                    stack.truncate(stack_len - 2);
 
-                //     stack.push(Node::AST(AST::EXPRESSION(Rc::new(
-                //         ExpressionType::DEREFERENCE { id },
-                //     ))));
-                //     true
-                // }
-
+                    let expr = Expression::DEREFERENCE { id };
+                    stack.push(Node::AST(AST::EXPRESSION(expr)));
+                    true
+                }
                 // token id -> ast id
                 [.., Node::Token(Token::IDENTIFIER(id))] => {
                     if let Some(Token::ASSIGN | Token::COLON) = tokenizer.peek() {
@@ -310,6 +325,19 @@ pub fn parse(code: &str) -> Instruction {
                     stack.truncate(stack_len - 2);
 
                     let instruction = Instruction::LOOP { block };
+                    stack.push(Node::AST(AST::INSTRUCTION(instruction)));
+
+                    true
+                }
+                // if () {}
+                [.., Node::Token(Token::IF), Node::AST(AST::EXPRESSION(condition)), Node::AST(AST::BLOCK(block))] =>
+                {
+                    let condition = condition.clone();
+                    let block = block.clone().map(Rc::new);
+
+                    stack.truncate(stack_len - 3);
+
+                    let instruction = Instruction::IF { condition, block };
                     stack.push(Node::AST(AST::INSTRUCTION(instruction)));
 
                     true

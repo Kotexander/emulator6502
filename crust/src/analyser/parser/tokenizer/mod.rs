@@ -17,6 +17,7 @@ pub enum AddrMode {
 pub enum Type {
     Uint(NonZeroU8),
     Int(NonZeroU8),
+    Bool,
     Ref { typ: Rc<Self>, addr: AddrMode },
 }
 impl Type {
@@ -30,6 +31,7 @@ impl Type {
                     AddrMode::ZPG => NonZeroU8::new_unchecked(1),
                 }
             },
+            Type::Bool => unsafe { NonZeroU8::new_unchecked(1) },
         }
     }
 }
@@ -42,6 +44,7 @@ impl Display for Type {
                 AddrMode::ABS => write!(f, "#{typ}"),
                 AddrMode::ZPG => write!(f, "${typ}"),
             },
+            Type::Bool => write!(f, "bool"),
             // Type::Ref(typ) => write!(f, "&{typ}"),
         }
     }
@@ -51,6 +54,10 @@ impl Display for Type {
 pub enum Operator {
     ADD,
     SUB,
+    GREATERTHEN,
+    LESSTHEN,
+    OR,
+    AND,
     // MUL,
     // DIV,
 }
@@ -59,6 +66,10 @@ impl Display for Operator {
         match self {
             Operator::ADD => write!(f, "+"),
             Operator::SUB => write!(f, "-"),
+            Operator::GREATERTHEN => write!(f, ">"),
+            Operator::LESSTHEN => write!(f, "<"),
+            Operator::OR => write!(f, "or"),
+            Operator::AND => write!(f, "and"),
         }
     }
 }
@@ -78,10 +89,13 @@ pub enum Token {
     OPEN,
     CLOSE,
     LOOP,
+    IF,
+    ELSE,
     BOPEN,
     BCLOSE,
     REFERENCE,
     DEREFERENCE,
+    BOOL(bool),
 }
 
 fn symbol(c: char) -> Option<Token> {
@@ -95,10 +109,13 @@ fn symbol(c: char) -> Option<Token> {
         '=' => Some(Token::ASSIGN),
         '+' => Some(Token::OPERATOR(Operator::ADD)),
         '-' => Some(Token::OPERATOR(Operator::SUB)),
+        '>' => Some(Token::OPERATOR(Operator::GREATERTHEN)),
+        '<' => Some(Token::OPERATOR(Operator::LESSTHEN)),
         '&' => Some(Token::REFERENCE),
         '*' => Some(Token::DEREFERENCE),
         '$' => Some(Token::POINTER(AddrMode::ZPG)),
         '#' => Some(Token::POINTER(AddrMode::ABS)),
+
         _ => None,
     }
 }
@@ -113,6 +130,7 @@ fn typ(s: &str) -> Option<Type> {
             let n = NonZeroU8::new(u8::from_str(n).ok()?)?;
             Some(Type::Int(n))
         }
+        "bool" => Some(Type::Bool),
         _ => None,
     }
 }
@@ -166,6 +184,12 @@ impl<'a> Iterator for Tokenizer<'a> {
             _ if token == "zpg" => Some(Token::ADDRTYPE(AddrMode::ZPG)),
             _ if token == "var" => Some(Token::VAR),
             _ if token == "loop" => Some(Token::LOOP),
+            _ if token == "if" => Some(Token::IF),
+            _ if token == "else" => Some(Token::ELSE),
+            _ if token == "false" => Some(Token::BOOL(false)),
+            _ if token == "true" => Some(Token::BOOL(true)),
+            _ if token == "or" => Some(Token::OPERATOR(Operator::OR)),
+            _ if token == "and" => Some(Token::OPERATOR(Operator::AND)),
             _ => {
                 if let Some(typ) = typ(token) {
                     Some(Token::TYPE(typ))

@@ -8,7 +8,7 @@ abs var p2 = &p;
 loop {
     c = a + b;
     a = b;
-    b = c;
+    b = *p;
 
     zp_out_u32 = p;
 }

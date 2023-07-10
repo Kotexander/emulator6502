@@ -1,8 +1,0 @@
-var x:u4 = 420;
-var y:u4 = 69;
-
-var a:u4 = 420-69-1;
-zp_out_u32 = &a;
-
-a = x-0;
-zp_out_u32 = &a;

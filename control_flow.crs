@@ -1,0 +1,23 @@
+var t: u4 = 1;
+abs var f: u4 = 0;
+
+if true or false {
+    zp_out_u32 = &t;
+}
+if (true and false) {
+    zp_out_u32 = &f;
+}
+
+if false or false {
+    zp_out_u32 = &f;
+}
+if (false and false) {
+    zp_out_u32 = &t;
+}
+
+if true or true {
+    zp_out_u32 = &t;
+}
+if (true and true) {
+    zp_out_u32 = &t;
+}

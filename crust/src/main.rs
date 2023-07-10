@@ -182,7 +182,86 @@ fn sub_id(ram: &mut Ram, size: u8, addr: Addr) {
     }
 }
 
-fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state: State) {
+// fn load_ind(ram: &mut Ram, size: u8, addr: Addr, typ: AddrMode) {
+//     match typ {
+//         AddrMode::ABS => {
+//             todo!();
+//             // ram.insert_u8(LDA_ZPG as u8);
+//             // ram.insert_u8(0);
+//             // ram.insert_u8(PHA_IMP as u8);
+
+//             // ram.insert_u8(LDA_ZPG as u8);
+//             // ram.insert_u8(1);
+//             // ram.insert_u8(PHA_IMP as u8);
+//         }
+//         AddrMode::ZPG => {
+//             ram.insert_u8(LDX_IMM as u8);
+//             ram.insert_u8(0);
+//         }
+//     }
+//     for i in 0..size {
+//         // match addr {
+//         //     Addr::Abs(p) => {}
+//         //     Addr::Zp(p) => {
+//         //         ram.insert_u8(LDA_IZX as u8);
+//         //         ram.insert_u8(p);
+//         //         ram.insert_u8(STA_ZPG as u8);
+//         //         ram.insert_u8(i);
+//         //     }
+//         // }
+//         match typ {
+//             AddrMode::ABS => match addr {
+//                 Addr::Abs(_) => todo!(),
+//                 Addr::Zp(_) => todo!(),
+//             },
+//             AddrMode::ZPG => match addr {
+//                 Addr::Abs(p) => {
+//                     todo!();
+//                 }
+//                 Addr::Zp(_) => {
+//                     ram.insert_u8(LDA_IZX as u8);
+//                     ram.insert_u8(STA_ZPG as u8);
+//                     ram.insert_u8(i);
+//                     ram.insert_u8(INX_IMP as u8);
+//                 }
+//             },
+//         }
+//     }
+//     // match typ {
+//     //     AddrMode::ABS => {
+//     //         ram.insert_u8(PLA_IMP as u8);
+//     //         ram.insert_u8(STA_ZPG as u8);
+//     //         ram.insert_u8(1);
+
+//     //         ram.insert_u8(PLA_IMP as u8);
+//     //         ram.insert_u8(STA_ZPG as u8);
+//     //         ram.insert_u8(0);
+//     //     }
+//     //     AddrMode::ZPG => {}
+//     // }
+
+//     // for i in 0..size {
+//     // load
+//     // match addr {
+//     // Addr::Abs(p) => {
+//     // let p = p + i as u16;
+//     // ram.insert_u8(LDA_i as u8);
+//     // ram.insert_u16(p);
+//     // }
+//     // Addr::Zp(p) => {
+//     // let p = p + i;
+//     // ram.insert_u8(LDA_ZPG as u8);
+//     // ram.insert_u8(p);
+//     // }
+//     // };
+
+//     // save
+//     // ram.insert_u8(STA_ZPG as u8);
+//     // ram.insert_u8(i);
+//     // }
+// }
+
+fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state: Option<Operator>) {
     match expr {
         Expression::CONSTANT { value, typ } => {
             let typ = typ.borrow();
@@ -192,28 +271,34 @@ fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state:
             bytes.resize(size as usize, 0);
 
             match state {
-                State::Normal => load_bytes(ram, &bytes),
-                State::Add => add_bytes(ram, &bytes),
-                State::Sub => sub_bytes(ram, &bytes),
+                Some(op) => match op {
+                    Operator::ADD => add_bytes(ram, &bytes),
+                    Operator::SUB => sub_bytes(ram, &bytes),
+                    _ => {
+                        panic!()
+                    }
+                },
+                None => load_bytes(ram, &bytes),
             }
         }
         Expression::IDENTIFIER { id } => {
             let var = &mem_table[id];
             let size = var.typ.get_size().get();
             let addr = var.addr;
+
             match state {
-                State::Normal => load_id(ram, size, addr),
-                State::Add => add_id(ram, size, addr),
-                State::Sub => sub_id(ram, size, addr),
+                Some(op) => match op {
+                    Operator::ADD => add_id(ram, size, addr),
+                    Operator::SUB => sub_id(ram, size, addr),
+                    _ => {}
+                },
+                None => load_id(ram, size, addr),
             }
         }
         Expression::BINOP { lhs, op, rhs } => {
             gen_expression(lhs, ram, mem_table, state);
-            let state = match op {
-                Operator::ADD => State::Add,
-                Operator::SUB => State::Sub,
-            };
-            gen_expression(rhs, ram, mem_table, state);
+
+            gen_expression(rhs, ram, mem_table, Some(*op));
         }
         Expression::REFERENCE { id } => {
             let var = &mem_table[id];
@@ -230,17 +315,9 @@ fn gen_expression(expr: &Expression, ram: &mut Ram, mem_table: &MemTable, state:
             };
 
             gen_expression(&expr, ram, mem_table, state);
-        } // Expression::DEREFERENCE { id } => {
-          // todo!();
-          // let var = &mem_table[id];
-          // ram.insert_u8(0xA2); // LDX_IMM
-          // ram.insert_u8(0);
-          // match state {
-          // State::Normal => arr_load(ram, size, addr),
-          // State::Add => todo!(),
-          // State::Sub => todo!(),
-          // }
-          // }
+        }
+        Expression::DEREFERENCE { id } => todo!(),
+        Expression::BOOL { value } => todo!(),
     }
 }
 fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTable) {
@@ -249,7 +326,7 @@ fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTabl
         | Instruction::DECLARE {
             id: ident, expr, ..
         } => {
-            gen_expression(expr, ram, mem_table, State::Normal);
+            gen_expression(expr, ram, mem_table, None);
             let var = &mem_table[ident];
             let size = var.typ.get_size().get();
 
@@ -283,6 +360,10 @@ fn gen_instruction(instruction: &Instruction, ram: &mut Ram, mem_table: &MemTabl
         Instruction::BIN { lhs, rhs } => {
             gen_instruction(lhs, ram, mem_table);
             gen_instruction(rhs, ram, mem_table);
+        }
+        Instruction::IF { condition, block } => {
+            gen_expression(condition, ram, mem_table, None);
+            todo!();
         }
     }
 }
